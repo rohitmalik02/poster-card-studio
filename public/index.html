@@ -19,20 +19,22 @@
       <div class="seg mode" id="modeSeg" role="group" aria-label="Mode">
         <button type="button" data-mode="single" aria-pressed="true">Single post</button>
         <button type="button" data-mode="carousel" aria-pressed="false">Carousel</button>
+        <button type="button" data-mode="nightshift" aria-pressed="false">Night Shift</button>
       </div>
       <div class="specs" id="specs"></div>
     </div>
-    <div class="canvas-wrap single-only" id="wrap">
+    <div class="canvas-wrap postcard-only" id="wrap">
       <canvas id="preview" aria-label="Post preview"></canvas>
       <div class="drop-veil" id="veil" hidden>Drop to use as poster</div>
     </div>
-    <p class="hint single-only">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
-    <div class="canvas-wrap carousel-only" id="cWrap"><canvas id="cPreview" aria-label="Slide preview"></canvas></div>
-    <div class="strip carousel-only" id="strip" aria-label="Slides"></div>
-    <p class="hint carousel-only">Drop or paste a poster to put it on the selected slide. <kbd>←</kbd> <kbd>→</kbd> switch slides.</p>
+    <div class="deck deck-only" id="deck" aria-label="Carousel slides"></div>
+    <p class="hint postcard-only">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
+    <div class="canvas-wrap ns-only" id="cWrap"><canvas id="cPreview" aria-label="Slide preview"></canvas></div>
+    <div class="strip ns-only" id="strip" aria-label="Slides"></div>
+    <p class="hint ns-only">Drop or paste a poster to put it on the selected slide. <kbd>←</kbd> <kbd>→</kbd> switch slides.</p>
   </main>
 
-  <aside class="rail single-only">
+  <aside class="rail postcard-only">
     <div class="rail-scroll">
       <details open>
         <summary>Poster</summary>
@@ -154,11 +156,14 @@
         <button class="btn primary" id="download" type="button">Download post</button>
         <button class="btn" id="copyCaption" type="button">Copy caption</button>
       </div>
+      <div class="deck-only wide">
+        <button class="btn primary" id="downloadAll" type="button">Download all (.zip)</button>
+      </div>
       <p class="toast" id="toast" role="status"></p>
     </div>
   </aside>
 
-  <aside class="rail carousel-only" id="cRail">
+  <aside class="rail ns-only" id="cRail">
     <div class="rail-scroll" id="cRailScroll"></div>
     <div class="exportbar">
       <div class="row">
@@ -182,6 +187,6 @@
 
 <script src="samples.js"></script>
 <script src="app.js"></script>
-<script src="carousel.js"></script>
+<script src="nightshift.js"></script>
 </body>
 </html>

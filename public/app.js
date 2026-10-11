@@ -81,7 +81,7 @@ let state = Object.assign(clone(LOOK_DEFAULTS), {
   ...SAMPLES["before-sunrise"],
   handle: "@yourhandle",
   show: { kicker: true, meta: true, stars: true, blurb: true, handle: true },
-  accent: null, palette: [],
+  accent: "#e9b65a", palette: [],
 });
 let posterCanvas = null;   // 2:3 crop of the uploaded poster
 let bgImage = null;        // optional separate backdrop image
@@ -118,7 +118,7 @@ function hslToHex(h, s, l) {
   return "#" + [f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, "0")).join("");
 }
 function hexToRgb(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-const rgba = (hex, a) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${a})`; };
+const rgba = (hex, a) => { const [r, g, b] = hexToRgb(hex || "#e9b65a"); return `rgba(${r},${g},${b},${a})`; };
 
 function extractPalette(src) {
   const c = document.createElement("canvas"); c.width = 48; c.height = 72;
@@ -169,10 +169,129 @@ async function setPoster(src, { persist = true, keepAccent = false } = {}) {
     state.poster.glow = pal.lum < 0.25 ? 0.8 : pal.lum < 0.4 ? 0.55 : 0.3;
     syncInputs();
   }
-  if (persist) {
-    try { localStorage.setItem(POSTER_KEY, posterCanvas.toDataURL("image/jpeg", 0.92)); } catch (e) { /* too big for storage: fine */ }
-  }
+  if (persist) idbPut(`deck:${deck[cur].id}`, downsized(posterCanvas, 1400).toDataURL("image/jpeg", 0.92));
   renderSwatches(); schedule();
+}
+
+/* ---------------- carousel deck ----------------
+   Each slide keeps its own words, poster, backdrop still and accent; the look is shared.
+   The current slide's words live in `state` (so every control keeps working); the rest wait in `deck`. */
+const DECK_KEY = "poster-card-studio:deck:v1";
+const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "runtime", "genre", "rating", "blurb", "accent", "palette"];
+const uid = () => Math.random().toString(36).slice(2, 10);
+const pick = o => Object.fromEntries(CONTENT_KEYS.map(k => [k, clone(o[k] ?? null)]));
+let deck = [], cur = 0;
+const imgs = new Map(); // slide id -> { poster, bg, base }
+
+function stash() {
+  if (!deck[cur]) return;
+  deck[cur] = { id: deck[cur].id, ...pick(state) };
+  imgs.set(deck[cur].id, { poster: posterCanvas, bg: bgImage, base: baseColor });
+}
+function loadSlide(i) {
+  cur = i; const sl = deck[i];
+  for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]);
+  if (!state.accent) state.accent = "#e9b65a";
+  if (!Array.isArray(state.palette)) state.palette = [];
+  const im = imgs.get(sl.id) || {};
+  posterCanvas = im.poster || null; bgImage = im.bg || null; baseColor = im.base || "#141216";
+}
+// Temporarily make slide i current (for thumbnails and export), then put everything back.
+function withSlide(i, fn) {
+  if (i === cur) return fn();
+  stash(); const back = cur, keepLong = tooLong; loadSlide(i);
+  try { return fn(); } finally { loadSlide(back); tooLong = keepLong; }
+}
+function selectSlide(i) {
+  if (i < 0 || i >= deck.length) return;
+  stash(); loadSlide(i);
+  document.getElementById("clearBg").hidden = !bgImage;
+  syncInputs(); renderSamples(); renderSwatches(); renderDeck(); schedule();
+}
+function addSlide() {
+  if (deck.length >= 20) { toast("Instagram carousels stop at 20 slides."); return; }
+  stash();
+  deck.splice(cur + 1, 0, { id: uid(), sample: null, kicker: state.kicker, title: "New film", year: "", director: "", runtime: "", genre: "",
+    rating: 0, blurb: "Why it's worth watching, in one or two lines.", accent: state.accent, palette: state.palette });
+  selectSlide(cur + 1);
+  toast("Slide added. Drop a poster on it.");
+}
+function deleteSlide(i) {
+  if (deck.length <= 1) { toast("A carousel needs at least one slide."); return; }
+  stash(); const [gone] = deck.splice(i, 1);
+  imgs.delete(gone.id); idbPut(`deck:${gone.id}`, null); idbPut(`deck:${gone.id}:bg`, null);
+  cur = Math.min(i === cur ? i : cur > i ? cur - 1 : cur, deck.length - 1); loadSlide(cur);
+  document.getElementById("clearBg").hidden = !bgImage;
+  syncInputs(); renderSamples(); renderSwatches(); renderDeck(); schedule();
+  toast(`Deleted slide ${i + 1}.`);
+}
+function moveSlide(i, d) {
+  const j = i + d; if (j < 0 || j >= deck.length) return;
+  stash(); [deck[i], deck[j]] = [deck[j], deck[i]];
+  if (cur === i) cur = j; else if (cur === j) cur = i;
+  renderDeck(); schedule();
+}
+let thumbTimer = 0;
+function renderDeck() {
+  const box = document.getElementById("deck"); box.innerHTML = "";
+  deck.forEach((sl, i) => {
+    const slot = document.createElement("div"); slot.className = "slot";
+    const b = document.createElement("button"); b.type = "button"; b.className = "thumb";
+    b.setAttribute("aria-current", String(i === cur)); b.setAttribute("aria-label", `Slide ${i + 1}: ${i === cur ? state.title : sl.title}`);
+    const c = document.createElement("canvas"); c.style.width = "72px"; const tag = document.createElement("span"); tag.textContent = String(i + 1);
+    b.append(c, tag); b.addEventListener("click", () => selectSlide(i));
+    const tools = document.createElement("div"); tools.className = "tools";
+    const mk = (txt, label, fn) => { const t = document.createElement("button"); t.type = "button"; t.className = "icon-btn"; t.textContent = txt; t.title = label; t.setAttribute("aria-label", label); t.addEventListener("click", fn); return t; };
+    tools.append(mk("←", `Move slide ${i + 1} left`, () => moveSlide(i, -1)), mk("→", `Move slide ${i + 1} right`, () => moveSlide(i, 1)), mk("✕", `Delete slide ${i + 1}`, () => deleteSlide(i)));
+    slot.append(b, tools); box.append(slot);
+  });
+  const add = document.createElement("button"); add.type = "button"; add.className = "add"; add.textContent = "+ Add slide"; add.addEventListener("click", addSlide);
+  box.append(add);
+  renderThumbs();
+}
+function renderThumbs() {
+  if (document.body.dataset.mode !== "carousel") return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  document.querySelectorAll("#deck canvas").forEach((c, i) => { if (deck[i]) withSlide(i, () => render(c, 72 * dpr)); });
+}
+function saveDeck() {
+  stash();
+  try { localStorage.setItem(DECK_KEY, JSON.stringify({ cur, slides: deck })); } catch (e) { /* ignore */ }
+}
+async function imagesFor(sl) {
+  const out = { poster: null, bg: null, base: "#141216" };
+  const samples = window.SAMPLE_POSTERS || {};
+  const src = sl.sample && samples[sl.sample] ? samples[sl.sample] : await idbGet(`deck:${sl.id}`);
+  if (src) { try { out.poster = cropTo23(await loadImage(src)); out.base = extractPalette(out.poster).base; } catch (e) { /* ignore */ } }
+  const bg = await idbGet(`deck:${sl.id}:bg`);
+  if (bg) { try { out.bg = await loadImage(bg); } catch (e) { /* ignore */ } }
+  return out;
+}
+
+/* IndexedDB: shared with Night Shift's poster store */
+let dbp = null;
+function idb() {
+  if (!dbp) dbp = new Promise((res, rej) => {
+    const r = indexedDB.open("poster-card-studio", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("posters");
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function idbPut(key, val) {
+  try {
+    const d = await idb();
+    await new Promise((res, rej) => { const tx = d.transaction("posters", "readwrite"); val == null ? tx.objectStore("posters").delete(key) : tx.objectStore("posters").put(val, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  } catch (e) { /* storage unavailable: lasts until reload */ }
+}
+async function idbGet(key) {
+  try { const d = await idb(); return await new Promise(res => { const rq = d.transaction("posters").objectStore("posters").get(key); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); }
+  catch (e) { return null; }
+}
+function downsized(c, maxW) {
+  if (c.width <= maxW) return c;
+  const d = document.createElement("canvas"); d.width = maxW; d.height = Math.round(c.height * maxW / c.width);
+  const x = d.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(c, 0, 0, d.width, d.height); return d;
 }
 
 function readFile(file) {
@@ -629,24 +748,27 @@ let raf = 0, saveTimer = 0;
 function schedule() {
   if (raf) return;
   raf = requestAnimationFrame(() => { raf = 0; renderPreview(); });
+  clearTimeout(thumbTimer); thumbTimer = setTimeout(renderThumbs, 250);
   clearTimeout(saveTimer); saveTimer = setTimeout(save, 400);
 }
 function renderPreview() {
-  if (document.body.dataset.mode === "carousel") return; // carousel.js owns the stage then
+  if (document.body.dataset.mode === "nightshift") return; // nightshift.js owns the stage then
   const R = RATIOS[state.ratio]; const box = wrap.getBoundingClientRect();
   const s = Math.min((box.width - 40) / R.w, (box.height - 40) / R.h);
   const cw = Math.max(80, Math.floor(R.w * s)), dpr = Math.min(window.devicePixelRatio || 1, 2);
   preview.style.width = cw + "px"; preview.style.height = Math.round(cw * R.h / R.w) + "px";
   const used = render(preview, cw * dpr);
   const ew = +state.export.width, eh = Math.round(ew * R.h / R.w);
+  const slideInfo = document.body.dataset.mode === "carousel" ? ` · slide <b>${cur + 1}/${deck.length}</b>` : "";
   document.getElementById("specs").innerHTML =
-    `<b>${state.ratio}</b> ${R.name} · ${LAYOUTS[used].name} · exports <b>${ew} × ${eh}</b>`;
+    `<b>${state.ratio}</b> ${R.name} · ${LAYOUTS[used].name}${slideInfo} · exports <b>${ew} × ${eh}</b>`;
   document.documentElement.style.setProperty("--accent", state.accent || "#e9b65a");
   updateWordCount();
 }
 new ResizeObserver(() => schedule()).observe(wrap);
 
 function save() {
+  saveDeck();
   try {
     const { palette, ...rest } = state;
     localStorage.setItem(STORE_KEY, JSON.stringify(rest));
@@ -765,7 +887,7 @@ function renderSamples() {
       bgImage = null; document.getElementById("clearBg").hidden = true;
       renderSamples(); syncInputs();
       await setPoster(data[id], { persist: false });
-      try { localStorage.removeItem(POSTER_KEY); } catch (e) { /* ignore */ }
+      idbPut(`deck:${deck[cur].id}`, null); idbPut(`deck:${deck[cur].id}:bg`, null);
     });
     c.appendChild(b);
   }
@@ -775,13 +897,14 @@ function renderSamples() {
 document.getElementById("posterFile").addEventListener("change", e => { usePosterFile(e.target.files[0]); e.target.value = ""; });
 document.getElementById("bgFile").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  bgImage = await loadImage(await readFile(f)); document.getElementById("clearBg").hidden = false;
+  const url = await readFile(f); bgImage = await loadImage(url); document.getElementById("clearBg").hidden = false;
+  idbPut(`deck:${deck[cur].id}:bg`, url);
   toast("Backdrop now uses your still. The poster stays in front."); schedule();
 });
-document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; schedule(); });
+document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; idbPut(`deck:${deck[cur].id}:bg`, null); schedule(); });
 
 const veil = document.getElementById("veil"); let dragDepth = 0;
-const carouselMode = () => document.body.dataset.mode === "carousel";
+const carouselMode = () => document.body.dataset.mode === "nightshift"; // Night Shift handles its own drops
 window.addEventListener("dragenter", e => { if (!carouselMode() && [...e.dataTransfer.types].includes("Files")) { dragDepth++; veil.hidden = false; } });
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; veil.hidden = true; } });
 window.addEventListener("dragover", e => e.preventDefault());
@@ -810,6 +933,23 @@ document.getElementById("download").addEventListener("click", () => {
   }, fmt, 0.95);
 });
 
+document.getElementById("downloadAll").addEventListener("click", async () => {
+  const btn = document.getElementById("downloadAll"), fmt = state.export.format === "jpeg" ? "image/jpeg" : "image/png", ext = fmt === "image/png" ? "png" : "jpg";
+  btn.disabled = true; const files = [];
+  try {
+    for (let i = 0; i < deck.length; i++) {
+      btn.textContent = `Rendering ${i + 1}/${deck.length}…`;
+      const c = document.createElement("canvas"); const title = withSlide(i, () => { render(c, +state.export.width); return state.title; });
+      const blob = await new Promise(r => c.toBlob(r, fmt, 0.95)); if (!blob) throw new Error("render");
+      files.push({ name: `${String(i + 1).padStart(2, "0")}-${slug(title)}.${ext}`, data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(window.NS.makeZip(files)); a.download = `carousel-${state.ratio.replace(":", "x")}.zip`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Saved ${files.length} slides as a zip.`);
+  } catch (e) { toast("Export failed. Try JPG, or a smaller export width."); }
+  btn.disabled = false; btn.textContent = "Download all (.zip)";
+});
+
 document.getElementById("copyCaption").addEventListener("click", () => {
   const title = (state.title || "").trim(), plain = (state.blurb || "").replace(/\*/g, "").trim();
   const tag = slug(title).replace(/-/g, "");
@@ -836,17 +976,31 @@ async function boot() {
   for (const p of Object.values(PRESETS)) for (const f of [p.title, p.body, p.label]) faces.push(document.fonts.load(fontStr(f, 40)));
   const fontsReady = Promise.allSettled(faces);
 
-  let src = null;
-  try { if (!state.sample) src = localStorage.getItem(POSTER_KEY); } catch (e) { /* ignore */ }
-  const samples = window.SAMPLE_POSTERS || {};
-  if (!src) { const id = state.sample && samples[state.sample] ? state.sample : Object.keys(samples)[0]; if (id) { src = samples[id]; state.sample = id; } }
-  if (src) await setPoster(src, { persist: false, keepAccent: true }).catch(() => {});
-  renderSamples(); renderSwatches();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(DECK_KEY) || "null"); } catch (e) { /* ignore */ }
+  if (saved && Array.isArray(saved.slides) && saved.slides.length) { deck = saved.slides; cur = Math.min(saved.cur || 0, deck.length - 1); }
+  else {
+    deck = [{ id: uid(), ...pick(state) }]; cur = 0;
+    let old = null; try { old = localStorage.getItem(POSTER_KEY); } catch (e) { /* ignore */ }
+    if (old && !state.sample) { await idbPut(`deck:${deck[0].id}`, old); try { localStorage.removeItem(POSTER_KEY); } catch (e) { /* ignore */ } }
+    else if (!state.sample) { deck[0].sample = Object.keys(window.SAMPLE_POSTERS || {})[0] || null; }
+  }
+  const loaded = await Promise.all(deck.map(imagesFor));
+  deck.forEach((sl, i) => imgs.set(sl.id, loaded[i]));
+  loadSlide(cur);
+  document.getElementById("clearBg").hidden = !bgImage;
+  syncInputs(); renderSamples(); renderSwatches(); renderDeck();
+  window.addEventListener("pcs:mode", e => { if (e.detail === "carousel") renderDeck(); schedule(); });
+  window.addEventListener("keydown", e => {
+    if (document.body.dataset.mode !== "carousel" || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
+    if (e.key === "ArrowRight") { selectSlide(cur + 1); e.preventDefault(); }
+    if (e.key === "ArrowLeft") { selectSlide(cur - 1); e.preventDefault(); }
+  });
   await fontsReady; schedule();
   document.fonts.addEventListener?.("loadingdone", schedule);
 }
 boot();
 
-// Shared with carousel.js
+// Shared with nightshift.js
 window.PCS = { RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, cropTo23, readFile, toast, slug };
 })();

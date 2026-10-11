@@ -6,6 +6,12 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 - the title, credits, a star rating and a short paragraph, all editable
 - an accent colour pulled from the poster
 
+## Modes
+
+- **Single post:** one postcard.
+- **Carousel:** a deck of up to 20 postcards. Each slide has its own poster and words, and the look is shared across the deck. Exports as a zip.
+- **Night Shift:** a themed carousel for lists. It's a departure board whose clock runs from dusk to dawn, with rubber-stamp running jokes that escalate as they repeat.
+
 ## Features
 
 - Post shapes: 3:4, 4:5, 1:1, 9:16 and 3:2

@@ -1,4 +1,4 @@
-/* Carousel mode: "The Night Shift" — a departure-board carousel for themed lists.
+/* Night Shift mode: "The Night Shift" — a departure-board carousel for themed lists.
    Every slide is timestamped; the clock runs from dusk to dawn as you swipe. Repeated
    jokes are rubber stamps; an escalating stamp keeps a tally that gets louder each time. */
 (() => {
@@ -72,7 +72,7 @@ const BLANK = {
 };
 
 /* ---------------- state + storage ---------------- */
-const STORE = "poster-card-studio:carousel:v1", MODE = "poster-card-studio:mode";
+const STORE = "poster-card-studio:nightshift:v1", MODE = "poster-card-studio:mode:v2";
 let cs = null, sel = 0;
 try { cs = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) { cs = null; }
 if (!cs || !Array.isArray(cs.slides) || !cs.slides.length) cs = defaultCarousel();
@@ -102,7 +102,7 @@ async function loadPosters() {
     const d = await idb(); const pending = [];
     await new Promise(res => {
       const rq = d.transaction("posters").objectStore("posters").openCursor();
-      rq.onsuccess = () => { const c = rq.result; if (!c) return res(); const k = c.key; pending.push(loadImage(c.value).then(img => posters.set(k, cropTo23(img)))); c.continue(); };
+      rq.onsuccess = () => { const c = rq.result; if (!c) return res(); const k = c.key; if (String(k).startsWith("deck:")) { c.continue(); return; } pending.push(loadImage(c.value).then(img => posters.set(k, cropTo23(img)))); c.continue(); };
       rq.onerror = () => res();
     });
     await Promise.allSettled(pending);
@@ -189,49 +189,70 @@ function dotGrid(ctx, color, step = 12) {
   const x = t.getContext("2d"); x.fillStyle = color; x.beginPath(); x.arc(s / 2, s / 2, Math.max(0.7, s * 0.13), 0, Math.PI * 2); x.fill();
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = ctx.createPattern(t, "repeat"); ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
 }
+// Layer capture for layered PSD export. Normally a no-op wrapper; while capturing, each element
+// draws onto its own transparent canvas. "Group/Name" puts the layer in a folder.
+let CAP = null;
+function Ly(ctx, name, fn, { blend = "normal", opacity = 1 } = {}) {
+  if (!CAP) return fn(ctx);
+  const c = document.createElement("canvas"); c.width = ctx.canvas.width; c.height = ctx.canvas.height;
+  const l = c.getContext("2d"); l.setTransform(K, 0, 0, K, 0, 0);
+  const out = fn(l); CAP.push({ name, canvas: c, blend, opacity }); return out;
+}
 function grain(ctx, alpha) {
+  if (CAP) return Ly(ctx, "Background/Film grain", ctx => {
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = ctx.createPattern(getGrain(), "repeat"); ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
+  }, { blend: "overlay", opacity: alpha });
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = "overlay"; ctx.globalAlpha = alpha;
   ctx.fillStyle = ctx.createPattern(getGrain(), "repeat"); ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
 }
 function scanlines(ctx, W, H) {
-  ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.22)"; for (let y = 0; y < H; y += 5) ctx.fillRect(0, y, W, 2); ctx.restore();
+  Ly(ctx, "Background/Scanlines", ctx => { ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.22)"; for (let y = 0; y < H; y += 5) ctx.fillRect(0, y, W, 2); ctx.restore(); });
 }
 
 function drawNight(ctx, L, wash, { tint = null } = {}) {
   const { W, H } = L;
-  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, C.bg2); g.addColorStop(1, C.bg);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  if (wash) { // the poster's colours, blurred into the night
-    const q = 0.25, ow = Math.max(2, Math.round(W * K * q)), oh = Math.max(2, Math.round(H * K * q));
-    const off = document.createElement("canvas"); off.width = ow; off.height = oh; const o = off.getContext("2d");
-    const s = Math.max(ow / wash.width, oh / wash.height) * 1.6, dw = wash.width * s, dh = wash.height * s;
-    if (FILTER_OK) o.filter = `blur(${46 * K * q}px) saturate(1.5)`;
-    o.drawImage(wash, (ow - dw) / 2, (oh - dh) / 2, dw, dh);
-    ctx.save(); ctx.globalAlpha = 0.4; ctx.imageSmoothingQuality = "high"; ctx.drawImage(off, 0, 0, W, H); ctx.restore();
-    ctx.fillStyle = "rgba(7,9,15,0.4)"; ctx.fillRect(0, 0, W, H);
-  }
-  if (tint) { ctx.fillStyle = tint; ctx.fillRect(0, 0, W, H); }
-  dotGrid(ctx, "rgba(255,178,26,0.075)");
-  const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
-  v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.55)"); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  Ly(ctx, "Background/Night sky", ctx => {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, C.bg2); g.addColorStop(1, C.bg);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (wash) { // the poster's colours, blurred into the night
+      const q = 0.25, ow = Math.max(2, Math.round(W * K * q)), oh = Math.max(2, Math.round(H * K * q));
+      const off = document.createElement("canvas"); off.width = ow; off.height = oh; const o = off.getContext("2d");
+      const s = Math.max(ow / wash.width, oh / wash.height) * 1.6, dw = wash.width * s, dh = wash.height * s;
+      if (FILTER_OK) o.filter = `blur(${46 * K * q}px) saturate(1.5)`;
+      o.drawImage(wash, (ow - dw) / 2, (oh - dh) / 2, dw, dh);
+      ctx.save(); ctx.globalAlpha = 0.4; ctx.imageSmoothingQuality = "high"; ctx.drawImage(off, 0, 0, W, H); ctx.restore();
+      ctx.fillStyle = "rgba(7,9,15,0.4)"; ctx.fillRect(0, 0, W, H);
+    }
+    if (tint) { ctx.fillStyle = tint; ctx.fillRect(0, 0, W, H); }
+  });
+  Ly(ctx, "Background/Dot grid", ctx => dotGrid(ctx, "rgba(255,178,26,0.075)"));
+  Ly(ctx, "Background/Vignette", ctx => {
+    const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
+    v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.55)"); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  });
   grain(ctx, 0.06);
 }
 
 function drawHeader(ctx, L, { platform, fg = C.amber, sub = C.cream, glitch = false } = {}) {
   const { W, pad, slide } = L, top = pad;
-  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
-  ctx.font = font(F.dot, 84, 900);
   const t = (slide.time || "").toUpperCase();
-  if (glitch) chroma(ctx, c => { ctx.fillStyle = c || fg; ctx.fillText(t, pad, top + 70); }, 6);
-  else glowText(ctx, t, pad, top + 70, fg);
-  ctx.textAlign = "right";
-  ctx.font = font(F.dot, 30, 900);
-  glowText(ctx, platform || (slide.platform ? `● PLATFORM ${slide.platform}` : "●"), W - pad, top + 26, fg, 10);
-  ctx.save(); ctx.fillStyle = sub; ctx.globalAlpha = 0.72;
-  ctx.font = font(F.dot, 22, 800); ctx.fillText(ellipsize(ctx, `${cs.series} · ${cs.title}`.toUpperCase(), W * 0.5), W - pad, top + 60);
-  if (cs.hindi) { ctx.font = font(F.hindi, 26); ctx.fillText(cs.hindi, W - pad, top + 96); }
-  ctx.restore();
-  const y = top + 124; dottedLine(ctx, pad, y, W - pad, fg, 0.45);
+  Ly(ctx, "Header/Clock", ctx => {
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left"; ctx.font = font(F.dot, 84, 900);
+    if (glitch) chroma(ctx, c => { ctx.fillStyle = c || fg; ctx.fillText(t, pad, top + 70); }, 6);
+    else glowText(ctx, t, pad, top + 70, fg);
+  });
+  Ly(ctx, "Header/Platform", ctx => {
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "right"; ctx.font = font(F.dot, 30, 900);
+    glowText(ctx, platform || (slide.platform ? `● PLATFORM ${slide.platform}` : "●"), W - pad, top + 26, fg, 10);
+  });
+  Ly(ctx, "Header/Series", ctx => {
+    ctx.save(); ctx.textBaseline = "alphabetic"; ctx.textAlign = "right"; ctx.fillStyle = sub; ctx.globalAlpha = 0.72;
+    ctx.font = font(F.dot, 22, 800); ctx.fillText(ellipsize(ctx, `${cs.series} · ${cs.title}`.toUpperCase(), W * 0.5), W - pad, top + 60);
+    if (cs.hindi) { ctx.font = font(F.hindi, 26); ctx.fillText(cs.hindi, W - pad, top + 96); }
+    ctx.restore();
+  });
+  const y = top + 124;
+  Ly(ctx, "Header/Dotted rule", ctx => dottedLine(ctx, pad, y, W - pad, fg, 0.45));
   return y;
 }
 
@@ -244,25 +265,33 @@ function nightProgress(time) {
 }
 function drawFooter(ctx, L, { fg = C.amber, sub = C.cream } = {}) {
   const { W, H, pad, i, n, slide } = L, y = H - pad;
-  const g = ctx.createLinearGradient(pad, 0, W - pad, 0);
-  g.addColorStop(0, "#26338a"); g.addColorStop(0.55, "#7b3f9c"); g.addColorStop(1, "#ffa07a");
-  ctx.fillStyle = g; rrect(ctx, pad, y - 7, W - 2 * pad, 7, 3.5); ctx.fill();
-  const mx = pad + (W - 2 * pad) * nightProgress(slide.time);
-  ctx.save(); ctx.fillStyle = fg; ctx.shadowColor = fg; ctx.shadowBlur = 18 * K; ctx.beginPath(); ctx.arc(mx, y - 3.5, 12, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  ctx.save(); ctx.font = font(F.dot, 21, 800); ctx.fillStyle = sub; ctx.globalAlpha = 0.7; ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "left"; ctx.fillText(`STOP ${pad2(i + 1)}/${pad2(n)}`, pad, y - 30);
-  ctx.textAlign = "center"; ctx.fillText((cs.handle || "").toUpperCase(), W / 2, y - 30);
-  ctx.textAlign = "right"; ctx.fillText(i < n - 1 ? "SWIPE →" : "END OF LINE", W - pad, y - 30);
-  ctx.restore();
+  Ly(ctx, "Footer/Night progress bar", ctx => {
+    const g = ctx.createLinearGradient(pad, 0, W - pad, 0);
+    g.addColorStop(0, "#26338a"); g.addColorStop(0.55, "#7b3f9c"); g.addColorStop(1, "#ffa07a");
+    ctx.fillStyle = g; rrect(ctx, pad, y - 7, W - 2 * pad, 7, 3.5); ctx.fill();
+  });
+  Ly(ctx, "Footer/Progress dot", ctx => {
+    const mx = pad + (W - 2 * pad) * nightProgress(slide.time);
+    ctx.save(); ctx.fillStyle = fg; ctx.shadowColor = fg; ctx.shadowBlur = 18 * K; ctx.beginPath(); ctx.arc(mx, y - 3.5, 12, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  });
+  Ly(ctx, "Footer/Labels", ctx => {
+    ctx.save(); ctx.font = font(F.dot, 21, 800); ctx.fillStyle = sub; ctx.globalAlpha = 0.7; ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "left"; ctx.fillText(`STOP ${pad2(i + 1)}/${pad2(n)}`, pad, y - 30);
+    ctx.textAlign = "center"; ctx.fillText((cs.handle || "").toUpperCase(), W / 2, y - 30);
+    ctx.textAlign = "right"; ctx.fillText(i < n - 1 ? "SWIPE →" : "END OF LINE", W - pad, y - 30);
+    ctx.restore();
+  });
   return y - 64;
 }
 
-function drawPoster(ctx, src, x, y, w, h, rot = 0) {
-  ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(rot); ctx.translate(-w / 2, -h / 2);
-  ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.65)"; ctx.shadowBlur = 60 * K; ctx.shadowOffsetY = 26 * K; ctx.fillStyle = "#000"; rrect(ctx, 0, 0, w, h, 6); ctx.fill(); ctx.restore();
-  ctx.save(); rrect(ctx, 0, 0, w, h, 6); ctx.clip(); ctx.imageSmoothingQuality = "high"; ctx.drawImage(src, 0, 0, w, h); ctx.restore();
-  ctx.strokeStyle = "rgba(255,178,26,0.35)"; ctx.lineWidth = 2; rrect(ctx, 1, 1, w - 2, h - 2, 6); ctx.stroke();
-  ctx.restore();
+function drawPoster(ctx, src, x, y, w, h, rot = 0, name = "Poster") {
+  Ly(ctx, name, ctx => {
+    ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(rot); ctx.translate(-w / 2, -h / 2);
+    ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.65)"; ctx.shadowBlur = 60 * K; ctx.shadowOffsetY = 26 * K; ctx.fillStyle = "#000"; rrect(ctx, 0, 0, w, h, 6); ctx.fill(); ctx.restore();
+    ctx.save(); rrect(ctx, 0, 0, w, h, 6); ctx.clip(); ctx.imageSmoothingQuality = "high"; ctx.drawImage(src, 0, 0, w, h); ctx.restore();
+    ctx.strokeStyle = "rgba(255,178,26,0.35)"; ctx.lineWidth = 2; rrect(ctx, 1, 1, w - 2, h - 2, 6); ctx.stroke();
+    ctx.restore();
+  });
 }
 
 /* ---------------- stamps ---------------- */
@@ -275,7 +304,7 @@ function distressTile() {
   return (distress = c);
 }
 // Draws a rubber stamp centred on (cx, cy). Returns its unrotated box size.
-function drawStamp(ctx, { text, color = C.ink, cx, cy, scale = 1, rot = 0, tally = "", alpha = 0.92, maxChars = 15, badgeLeft = false }) {
+function drawStamp(ctx, { text, color = C.ink, cx, cy, scale = 1, rot = 0, tally = "", alpha = 0.92, maxChars = 15, badgeLeft = false, name = "Stamp" }) {
   const size = 46 * scale, padX = 28 * scale, padY = 22 * scale, lh = size * 1.1;
   const m = document.createElement("canvas").getContext("2d"); m.font = font(F.stamp, size);
   const words = (text || "").toUpperCase().split(/\s+/).filter(Boolean); const lines = []; let cur = "";
@@ -292,15 +321,17 @@ function drawStamp(ctx, { text, color = C.ink, cx, cy, scale = 1, rot = 0, tally
   lines.forEach((l, k) => x.fillText(l, bw / 2, padY + size * 0.8 + k * lh));
   x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = "destination-out";
   x.fillStyle = x.createPattern(distressTile(), "repeat"); x.fillRect(0, 0, c.width, c.height);
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot); ctx.globalAlpha = alpha;
-  ctx.drawImage(c, -(bw / 2 + mg), -(bh / 2 + mg), bw + mg * 2, bh + mg * 2);
-  if (tally) {
+  Ly(ctx, name, ctx => {
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot); ctx.globalAlpha = alpha;
+    ctx.drawImage(c, -(bw / 2 + mg), -(bh / 2 + mg), bw + mg * 2, bh + mg * 2); ctx.restore();
+  });
+  if (tally) Ly(ctx, name + " tally", ctx => {
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot);
     const r = 40 * scale + (tally.length > 2 ? 8 * scale : 0), bx = badgeLeft ? -bw / 2 + 4 * scale : bw / 2 - 4 * scale, by = -bh / 2 - 2 * scale;
-    ctx.globalAlpha = 1; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#14090a"; ctx.font = font(F.sign, 40 * scale); ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(tally, bx, by + 2 * scale); ctx.textBaseline = "alphabetic";
-  }
-  ctx.restore();
+    ctx.fillText(tally, bx, by + 2 * scale); ctx.restore();
+  });
   return { bw, bh };
 }
 const stampById = id => cs.stamps.find(s => s.id === id);
@@ -317,12 +348,14 @@ function stampPose(st, n, ax, ay, L) {
 }
 
 /* ---------------- slides ---------------- */
-function titleBlock(ctx, L, text, y, { maxLines = 2, max = 124, min = 56, color = C.cream } = {}) {
+function titleBlock(ctx, L, text, y, { maxLines = 2, max = 124, min = 56, color = C.cream, name = "Title" } = {}) {
   const maxW = L.W - 2 * L.pad;
   const f = fitLines(ctx, (text || "").toUpperCase(), F.sign, 400, maxW, maxLines, max, min);
-  ctx.font = font(F.sign, f.size); ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-  f.lines.forEach(ln => { y += f.size * 1.02; ctx.fillText(ln, L.pad, y); });
-  return y;
+  Ly(ctx, name, ctx => {
+    ctx.font = font(F.sign, f.size); ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    let yy = y; f.lines.forEach(ln => { yy += f.size * 1.02; ctx.fillText(ln, L.pad, yy); });
+  });
+  return y + f.lines.length * f.size * 1.02;
 }
 
 function drawFilm(ctx, L) {
@@ -330,16 +363,18 @@ function drawFilm(ctx, L) {
   drawNight(ctx, L, src);
   const hb = drawHeader(ctx, L), ft = drawFooter(ctx, L);
   let y = titleBlock(ctx, L, s.title, hb + 26);
-  if (s.meta) { y += 46; ctx.font = font(F.dot, 26, 900); ctx.textAlign = "left"; glowText(ctx, s.meta.toUpperCase(), pad, y, C.amber, 8); }
+  if (s.meta) { y += 46; const yy = y; Ly(ctx, "Year & director", ctx => { ctx.font = font(F.dot, 26, 900); ctx.textAlign = "left"; glowText(ctx, s.meta.toUpperCase(), pad, yy, C.amber, 8); }); }
   const rowTop = y + 38, rowH = ft - rowTop;
   let ph = rowH, pw = ph * 2 / 3; const maxPw = (W - 2 * pad) * 0.54;
   if (pw > maxPw) { pw = maxPw; ph = pw * 1.5; }
   drawPoster(ctx, src, pad, rowTop, pw, ph);
   const colX = pad + pw + 44, colW = W - pad - colX;
-  ctx.font = font(F.sign, 160); ctx.fillStyle = C.amber; ctx.textAlign = "left"; ctx.fillText("“", colX - 4, rowTop + 118);
+  Ly(ctx, "Quote mark", ctx => { ctx.font = font(F.sign, 160); ctx.fillStyle = C.amber; ctx.textAlign = "left"; ctx.fillText("“", colX - 4, rowTop + 118); });
   const b = fitBlock(ctx, s.line || "", F.body, 500, colW, ph * 0.52, 48, 28, 1.25);
-  ctx.font = font(F.body, b.size, 500); ctx.fillStyle = C.cream;
-  b.lines.forEach((ln, k) => ctx.fillText(ln, colX, rowTop + 150 + b.size + k * b.lh));
+  Ly(ctx, "One-liner", ctx => {
+    ctx.font = font(F.body, b.size, 500); ctx.fillStyle = C.cream; ctx.textAlign = "left";
+    b.lines.forEach((ln, k) => ctx.fillText(ln, colX, rowTop + 150 + b.size + k * b.lh));
+  });
   const st = stampById(s.stamp);
   if (st) { const p = stampPose(st, L.counts[s.id], pad + pw + 20, rowTop + ph - 120, L); drawStamp(ctx, { text: st.text, ...p }); }
 }
@@ -349,7 +384,7 @@ function drawGrid(ctx, L) {
   drawNight(ctx, L, list[0] ? posterFor(`${s.id}:${list[0].id}`, list[0].title) : null);
   const hb = drawHeader(ctx, L), ft = drawFooter(ctx, L);
   let y = titleBlock(ctx, L, s.title, hb + 26, { max: 104 });
-  if (s.line) { y += 48; ctx.font = font(F.body, 34, 500, "italic"); ctx.fillStyle = "rgba(244,234,215,0.82)"; ctx.textAlign = "left"; ctx.fillText(s.line, pad, y); }
+  if (s.line) { y += 48; const yy = y; Ly(ctx, "Subheading", ctx => { ctx.font = font(F.body, 34, 500, "italic"); ctx.fillStyle = "rgba(244,234,215,0.82)"; ctx.textAlign = "left"; ctx.fillText(s.line, pad, yy); }); }
   const st = stampById(s.stamp), band = st ? 230 : 0;
   const top = y + 36, availH = ft - top - band, maxW = W - 2 * pad;
   const n = list.length || 1, cols = n <= 4 ? 2 : 3, rows = Math.ceil(n / cols), gap = 26, cap = 42;
@@ -358,22 +393,28 @@ function drawGrid(ctx, L) {
   const gw = cols * cw + gap * (cols - 1), x0 = (W - gw) / 2;
   list.forEach((it, k) => {
     const cx = x0 + (k % cols) * (cw + gap), cy = top + Math.floor(k / cols) * (cw * 1.5 + cap + gap);
-    drawPoster(ctx, posterFor(`${s.id}:${it.id}`, it.title), cx, cy, cw, cw * 1.5);
-    ctx.font = font(F.dot, cols === 3 ? 19 : 22, 900); ctx.fillStyle = C.cream; ctx.textAlign = "center";
-    ctx.fillText(ellipsize(ctx, (it.title || "").toUpperCase(), cw), cx + cw / 2, cy + cw * 1.5 + 32);
+    drawPoster(ctx, posterFor(`${s.id}:${it.id}`, it.title), cx, cy, cw, cw * 1.5, 0, `Posters/${it.title || "Film"}`);
+    Ly(ctx, `Captions/${it.title || "Film"}`, ctx => {
+      ctx.font = font(F.dot, cols === 3 ? 19 : 22, 900); ctx.fillStyle = C.cream; ctx.textAlign = "center";
+      ctx.fillText(ellipsize(ctx, (it.title || "").toUpperCase(), cw), cx + cw / 2, cy + cw * 1.5 + 32);
+    });
   });
   if (st) {
     const n2 = L.counts[s.id], gh = rows * (cw * 1.5 + cap) + gap * (rows - 1), sy = top + gh + band * 0.5;
     const p = st.escalates ? { cx: W / 2 + 20, cy: sy, scale: 1.15, rot: -6 * DEG, tally: `×${n2}` } : stampPose(st, n2, W / 2, sy, L);
     const { bw, bh } = drawStamp(ctx, { text: st.text, ...p });
     if (st.escalates && n2 >= 4) { // tally marks and a tired note
-      ctx.save(); ctx.translate(p.cx - bw / 2 - 120, p.cy - 30); ctx.rotate(-6 * DEG);
-      ctx.strokeStyle = C.ink; ctx.lineWidth = 7; ctx.lineCap = "round";
-      for (let i = 0; i < Math.min(n2, 4); i++) { ctx.beginPath(); ctx.moveTo(i * 18, 0); ctx.lineTo(i * 18 + 3, 62); ctx.stroke(); }
-      ctx.beginPath(); ctx.moveTo(-10, 46); ctx.lineTo(70, 12); ctx.stroke();
-      ctx.restore();
-      ctx.save(); ctx.translate(p.cx + bw / 2 + 95, p.cy + 40); ctx.rotate(-10 * DEG);
-      ctx.font = font(F.stamp, 44); ctx.fillStyle = C.ink; ctx.textAlign = "center"; ctx.fillText("again??", 0, 0); ctx.restore();
+      Ly(ctx, "Tally marks", ctx => {
+        ctx.save(); ctx.translate(p.cx - bw / 2 - 120, p.cy - 30); ctx.rotate(-6 * DEG);
+        ctx.strokeStyle = C.ink; ctx.lineWidth = 7; ctx.lineCap = "round";
+        for (let i = 0; i < Math.min(n2, 4); i++) { ctx.beginPath(); ctx.moveTo(i * 18, 0); ctx.lineTo(i * 18 + 3, 62); ctx.stroke(); }
+        ctx.beginPath(); ctx.moveTo(-10, 46); ctx.lineTo(70, 12); ctx.stroke();
+        ctx.restore();
+      });
+      Ly(ctx, "again??", ctx => {
+        ctx.save(); ctx.translate(p.cx + bw / 2 + 95, p.cy + 40); ctx.rotate(-10 * DEG);
+        ctx.font = font(F.stamp, 44); ctx.fillStyle = C.ink; ctx.textAlign = "center"; ctx.fillText("again??", 0, 0); ctx.restore();
+      });
     }
   }
 }
@@ -389,15 +430,15 @@ function drawClimax(ctx, L) {
   const spacing = () => size * 0.16;
   const width = () => { ctx.font = font(F.sign, size); return [...t].reduce((a, ch) => a + ctx.measureText(ch).width + spacing(), -spacing()); };
   while (size > 60 && width() > maxW) size -= 6;
-  ctx.font = font(F.sign, size); let x = pad; const base = hb + 30 + size * 0.95;
-  for (const ch of t) {
-    const w = ctx.measureText(ch).width, r = (rnd() - 0.5) * 0.42, dy = (rnd() - 0.5) * 34;
-    ctx.save(); ctx.translate(x + w / 2, base + dy); ctx.rotate(r);
-    chroma(ctx, c => { ctx.fillStyle = c || C.cream; ctx.textAlign = "center"; ctx.fillText(ch, 0, 0); }, 7);
-    ctx.restore(); x += w + spacing();
-  }
+  ctx.font = font(F.sign, size); const base = hb + 30 + size * 0.95;
+  const letters = []; { let x = pad; for (const ch of t) { const w = ctx.measureText(ch).width; letters.push({ ch, x: x + w / 2, r: (rnd() - 0.5) * 0.42, dy: (rnd() - 0.5) * 34 }); x += w + spacing(); } }
+  letters.forEach((lt, k) => Ly(ctx, `Title letters/${lt.ch} (${k + 1})`, ctx => {
+    ctx.font = font(F.sign, size); ctx.save(); ctx.translate(lt.x, base + lt.dy); ctx.rotate(lt.r);
+    chroma(ctx, c => { ctx.fillStyle = c || C.cream; ctx.textAlign = "center"; ctx.fillText(lt.ch, 0, 0); }, 7);
+    ctx.restore();
+  }));
   let y = base + 30;
-  if (s.meta) { y += 42; ctx.font = font(F.dot, 26, 900); ctx.textAlign = "left"; chroma(ctx, c => { ctx.fillStyle = c || C.amber; ctx.fillText(s.meta.toUpperCase(), pad, y); }, 3); }
+  if (s.meta) { y += 42; const yy = y; Ly(ctx, "Year & director", ctx => { ctx.font = font(F.dot, 26, 900); ctx.textAlign = "left"; chroma(ctx, c => { ctx.fillStyle = c || C.amber; ctx.fillText(s.meta.toUpperCase(), pad, yy); }, 3); }); }
   // the spiked line at the bottom
   const spike = (s.spike || "").toUpperCase();
   const sp = fitLines(ctx, spike, F.stamp, 400, maxW, 2, 54, 30);
@@ -407,24 +448,28 @@ function drawClimax(ctx, L) {
   if (pw > maxPw) { pw = maxPw; ph = pw * 1.5; }
   drawPoster(ctx, src, pad + 10, rowTop, pw, ph, 5 * DEG);
   const colX = pad + pw + 60, colW = W - pad - colX;
-  ctx.save(); ctx.translate(colX, rowTop + 40); ctx.rotate(-2.5 * DEG);
   const b = fitBlock(ctx, s.line || "", F.body, 500, colW, ph * 0.5, 46, 28, 1.25);
-  ctx.font = font(F.body, b.size, 500); ctx.textAlign = "left";
-  b.lines.forEach((ln, k) => chroma(ctx, c => { ctx.fillStyle = c || C.cream; ctx.fillText(ln, 0, b.size + k * b.lh); }, 2.5));
-  ctx.restore();
+  Ly(ctx, "One-liner", ctx => {
+    ctx.save(); ctx.translate(colX, rowTop + 40); ctx.rotate(-2.5 * DEG);
+    ctx.font = font(F.body, b.size, 500); ctx.textAlign = "left";
+    b.lines.forEach((ln, k) => chroma(ctx, c => { ctx.fillStyle = c || C.cream; ctx.fillText(ln, 0, b.size + k * b.lh); }, 2.5));
+    ctx.restore();
+  });
   const st = stampById(s.stamp);
   if (st) drawStamp(ctx, { text: st.text, cx: pad + pw * 0.95, cy: rowTop + ph * 0.62, scale: 1.32, rot: 11 * DEG, tally: st.escalates ? "×∞" : "" });
   // wobbling letters, double vision
-  let sy = ft - spikeH + sp.size + 18; ctx.font = font(F.stamp, sp.size); ctx.textAlign = "left";
-  sp.lines.forEach((ln, li) => {
-    const lw = ctx.measureText(ln).width; let lx = (W - lw) / 2; let k = 0;
-    for (const ch of ln) {
-      const w = ctx.measureText(ch).width, dy = Math.sin(k * 0.55 + li) * 12, r = Math.cos(k * 0.7) * 0.14;
-      ctx.save(); ctx.translate(lx + w / 2, sy + dy); ctx.rotate(r);
-      chroma(ctx, c => { ctx.fillStyle = c || "#ff6a5c"; ctx.textAlign = "center"; ctx.fillText(ch, 0, 0); }, 4);
-      ctx.restore(); lx += w; k++;
-    }
-    sy += sp.size * 1.35;
+  Ly(ctx, "The one-up line", ctx => {
+    let sy = ft - spikeH + sp.size + 18; ctx.font = font(F.stamp, sp.size); ctx.textAlign = "left";
+    sp.lines.forEach((ln, li) => {
+      const lw = ctx.measureText(ln).width; let lx = (W - lw) / 2; let k = 0;
+      for (const ch of ln) {
+        const w = ctx.measureText(ch).width, dy = Math.sin(k * 0.55 + li) * 12, r = Math.cos(k * 0.7) * 0.14;
+        ctx.save(); ctx.translate(lx + w / 2, sy + dy); ctx.rotate(r);
+        chroma(ctx, c => { ctx.fillStyle = c || "#ff6a5c"; ctx.textAlign = "center"; ctx.fillText(ch, 0, 0); }, 4);
+        ctx.restore(); lx += w; k++;
+      }
+      sy += sp.size * 1.35;
+    });
   });
 }
 
@@ -432,34 +477,40 @@ function drawCover(ctx, L) {
   const { W, pad } = L;
   drawNight(ctx, L, null);
   const hb = drawHeader(ctx, L, { platform: "● ALL PLATFORMS" }), ft = drawFooter(ctx, L);
-  let y = hb + 30;
-  ctx.textAlign = "left"; ctx.font = font(F.dot, 150, 900); glowText(ctx, cs.series.toUpperCase(), pad - 6, y + 130, C.amber, 26);
-  if (cs.genre) drawStamp(ctx, { text: cs.genre, color: C.amber, cx: W - pad - 150, cy: y + 78, scale: 0.72, rot: -7 * DEG, maxChars: 9 });
+  let y = hb + 30; const y0 = y;
+  Ly(ctx, "Series number", ctx => { ctx.textAlign = "left"; ctx.font = font(F.dot, 150, 900); glowText(ctx, cs.series.toUpperCase(), pad - 6, y0 + 130, C.amber, 26); });
+  if (cs.genre) drawStamp(ctx, { text: cs.genre, color: C.amber, cx: W - pad - 150, cy: y + 78, scale: 0.72, rot: -7 * DEG, maxChars: 9, name: "Genre stamp" });
   y = titleBlock(ctx, L, cs.title, y + 160, { max: 150, min: 70 });
-  if (cs.hindi) { y += 70; ctx.font = font(F.hindi, 58); ctx.fillStyle = C.amber; ctx.globalAlpha = 0.9; ctx.fillText(cs.hindi, pad, y); ctx.globalAlpha = 1; }
+  if (cs.hindi) { y += 70; const yy = y; Ly(ctx, "Hindi title", ctx => { ctx.font = font(F.hindi, 58); ctx.fillStyle = C.amber; ctx.globalAlpha = 0.9; ctx.textAlign = "left"; ctx.fillText(cs.hindi, pad, yy); }); }
   // departure board
   const top = y + 44, bh = ft - top - 10, rowH = 46;
-  ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.42)"; rrect(ctx, pad - 18, top, W - 2 * pad + 36, bh, 10); ctx.fill();
-  ctx.strokeStyle = "rgba(255,178,26,0.28)"; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
+  Ly(ctx, "Departure board/Panel", ctx => {
+    ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.42)"; rrect(ctx, pad - 18, top, W - 2 * pad + 36, bh, 10); ctx.fill();
+    ctx.strokeStyle = "rgba(255,178,26,0.28)"; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
+  });
   const cTime = pad + 4, cSvc = pad + 196, cStat = W - pad - 4;
-  ctx.font = font(F.dot, 20, 900); ctx.fillStyle = "rgba(244,234,215,0.5)"; ctx.textAlign = "left";
-  ctx.fillText("TIME", cTime, top + 38); ctx.fillText("SERVICE", cSvc, top + 38); ctx.textAlign = "right"; ctx.fillText("STATUS", cStat, top + 38);
-  dottedLine(ctx, pad, top + 54, W - pad, C.amber, 0.3, 10, 1.6);
+  Ly(ctx, "Departure board/Column headings", ctx => {
+    ctx.font = font(F.dot, 20, 900); ctx.fillStyle = "rgba(244,234,215,0.5)"; ctx.textAlign = "left";
+    ctx.fillText("TIME", cTime, top + 38); ctx.fillText("SERVICE", cSvc, top + 38); ctx.textAlign = "right"; ctx.fillText("STATUS", cStat, top + 38);
+    dottedLine(ctx, pad, top + 54, W - pad, C.amber, 0.3, 10, 1.6);
+  });
   const rows = cs.slides.filter(s => s.type === "film" || s.type === "grid" || s.type === "climax");
   const fit = Math.max(1, Math.floor((bh - 70) / rowH)); const shown = rows.length > fit ? rows.slice(0, fit - 1) : rows;
   let ry = top + 54 + rowH - 12;
   const statW = 250;
   for (const r of shown) {
-    const st = stampById(r.stamp), climax = r.type === "climax";
-    ctx.font = font(F.dot, 25, 900); ctx.textAlign = "left"; glowText(ctx, (r.time || "").toUpperCase(), cTime, ry, C.amber, 6);
-    ctx.fillStyle = C.cream; ctx.fillText(ellipsize(ctx, (r.title || "").toUpperCase(), cStat - statW - cSvc), cSvc, ry);
-    ctx.textAlign = "right"; ctx.font = font(F.dot, 22, 900);
-    const status = climax ? "??????" : st ? st.short.toUpperCase() : r.type === "grid" ? "DELAYED" : "ON TIME";
-    if (climax) chroma(ctx, c => { ctx.fillStyle = c || C.ink; ctx.fillText(status, cStat, ry); }, 3);
-    else { ctx.fillStyle = st ? C.ink : "rgba(244,234,215,0.65)"; ctx.fillText(status, cStat, ry); }
+    const st = stampById(r.stamp), climax = r.type === "climax", yy = ry;
+    Ly(ctx, `Departure board/${r.title || "Row"}`, ctx => {
+      ctx.font = font(F.dot, 25, 900); ctx.textAlign = "left"; glowText(ctx, (r.time || "").toUpperCase(), cTime, yy, C.amber, 6);
+      ctx.fillStyle = C.cream; ctx.fillText(ellipsize(ctx, (r.title || "").toUpperCase(), cStat - statW - cSvc), cSvc, yy);
+      ctx.textAlign = "right"; ctx.font = font(F.dot, 22, 900);
+      const status = climax ? "??????" : st ? st.short.toUpperCase() : r.type === "grid" ? "DELAYED" : "ON TIME";
+      if (climax) chroma(ctx, c => { ctx.fillStyle = c || C.ink; ctx.fillText(status, cStat, yy); }, 3);
+      else { ctx.fillStyle = st ? C.ink : "rgba(244,234,215,0.65)"; ctx.fillText(status, cStat, yy); }
+    });
     ry += rowH;
   }
-  if (rows.length > shown.length) { ctx.font = font(F.dot, 22, 900); ctx.textAlign = "left"; ctx.fillStyle = C.amber; ctx.fillText(`+ ${rows.length - shown.length} MORE SERVICES TONIGHT · SWIPE →`, cSvc, ry); }
+  if (rows.length > shown.length) { const yy = ry; Ly(ctx, "Departure board/More services", ctx => { ctx.font = font(F.dot, 22, 900); ctx.textAlign = "left"; ctx.fillStyle = C.amber; ctx.fillText(`+ ${rows.length - shown.length} MORE SERVICES TONIGHT · SWIPE →`, cSvc, yy); }); }
 }
 
 function drawLegend(ctx, L) {
@@ -470,43 +521,52 @@ function drawLegend(ctx, L) {
   const noteH = s.line ? 90 : 0, top = y + 40, area = ft - top - noteH, n = cs.stamps.length || 1, rowH = area / n;
   cs.stamps.forEach((st, k) => {
     const cy = top + rowH * (k + 0.5);
-    drawStamp(ctx, { text: st.text, cx: pad + 180, cy, scale: Math.min(0.78, rowH / 260), rot: (k % 2 ? 4 : -5) * DEG, maxChars: 12 });
+    drawStamp(ctx, { text: st.text, cx: pad + 180, cy, scale: Math.min(0.78, rowH / 260), rot: (k % 2 ? 4 : -5) * DEG, maxChars: 12, name: `Stamps/${st.text}` });
     const tx = pad + 410, tw = W - pad - tx;
     const b = fitBlock(ctx, "= " + (st.meaning || ""), F.body, 500, tw, rowH * 0.6, 38, 24, 1.22);
-    ctx.font = font(F.body, b.size, 500, "italic"); ctx.fillStyle = C.cream; ctx.textAlign = "left";
-    const by = cy - (b.lines.length * b.lh) / 2 + b.size * 0.8;
-    b.lines.forEach((ln, i) => ctx.fillText(ln, tx, by + i * b.lh));
-    ctx.font = font(F.dot, 20, 900); ctx.fillStyle = C.amber;
-    ctx.fillText(st.escalates ? "STATUS: " + st.short.toUpperCase() + " · ESCALATES" : "STATUS: " + st.short.toUpperCase(), tx, by + b.lines.length * b.lh + 12);
+    Ly(ctx, `Meanings/${st.text}`, ctx => {
+      ctx.font = font(F.body, b.size, 500, "italic"); ctx.fillStyle = C.cream; ctx.textAlign = "left";
+      const by = cy - (b.lines.length * b.lh) / 2 + b.size * 0.8;
+      b.lines.forEach((ln, i) => ctx.fillText(ln, tx, by + i * b.lh));
+      ctx.font = font(F.dot, 20, 900); ctx.fillStyle = C.amber;
+      ctx.fillText(st.escalates ? "STATUS: " + st.short.toUpperCase() + " · ESCALATES" : "STATUS: " + st.short.toUpperCase(), tx, by + b.lines.length * b.lh + 12);
+    });
   });
-  if (s.line) {
+  if (s.line) Ly(ctx, "Bottom note", ctx => {
     ctx.save(); ctx.translate(W / 2, ft - 26); ctx.rotate(-2 * DEG);
     ctx.font = font(F.stamp, 40); ctx.fillStyle = C.ink; ctx.textAlign = "center"; ctx.fillText(s.line, 0, 0); ctx.restore();
-  }
+  });
 }
 
 function drawSunrise(ctx, L) {
-  const s = L.slide, { W, H, pad } = L;
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, "#151634"); sky.addColorStop(0.38, "#5d3474"); sky.addColorStop(0.62, "#f07a6a"); sky.addColorStop(0.78, "#ffc89a");
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
-  const hz = H * 0.74;
-  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hz); ctx.clip();
-  const sun = ctx.createRadialGradient(W / 2, hz + 30, 0, W / 2, hz + 30, W * 0.3);
-  sun.addColorStop(0, "#fff6d6"); sun.addColorStop(0.7, "#ffd27a"); sun.addColorStop(1, "#ffb15e");
-  ctx.shadowColor = "#ffd9a0"; ctx.shadowBlur = 120 * K; ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(W / 2, hz + 30, W * 0.28, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-  ctx.fillStyle = "#1a1530"; ctx.fillRect(0, hz, W, H - hz);           // the platform
-  ctx.fillStyle = "#ffcf3f"; for (let x = 0; x < W; x += 34) ctx.fillRect(x, hz, 20, 9); // safety edge
-  dotGrid(ctx, "rgba(42,22,48,0.08)");
+  const s = L.slide, { W, H, pad } = L, hz = H * 0.74;
+  Ly(ctx, "Background/Dawn sky", ctx => {
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, "#151634"); sky.addColorStop(0.38, "#5d3474"); sky.addColorStop(0.62, "#f07a6a"); sky.addColorStop(0.78, "#ffc89a");
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  });
+  Ly(ctx, "Background/Sun", ctx => {
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hz); ctx.clip();
+    const sun = ctx.createRadialGradient(W / 2, hz + 30, 0, W / 2, hz + 30, W * 0.3);
+    sun.addColorStop(0, "#fff6d6"); sun.addColorStop(0.7, "#ffd27a"); sun.addColorStop(1, "#ffb15e");
+    ctx.shadowColor = "#ffd9a0"; ctx.shadowBlur = 120 * K; ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(W / 2, hz + 30, W * 0.28, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+  Ly(ctx, "Background/Station platform", ctx => {
+    ctx.fillStyle = "#1a1530"; ctx.fillRect(0, hz, W, H - hz);
+    ctx.fillStyle = "#ffcf3f"; for (let x = 0; x < W; x += 34) ctx.fillRect(x, hz, 20, 9); // safety edge
+  });
+  Ly(ctx, "Background/Dot grid", ctx => dotGrid(ctx, "rgba(42,22,48,0.08)"));
   grain(ctx, 0.06);
   const hb = drawHeader(ctx, L, { platform: "● LAST STOP" }); drawFooter(ctx, L);
-  let y = titleBlock(ctx, L, s.title || "", hb + 60, { max: 170, min: 80 });
+  let y = titleBlock(ctx, L, s.title || "", hb + 60, { max: 170, min: 80, name: "Headline" });
   if (s.kicker) drawStamp(ctx, { text: s.kicker, cx: W - pad - 170, cy: y + 70, scale: 1.25, rot: -9 * DEG });
   if (s.line) {
-    const b = fitBlock(ctx, s.line, F.body, 500, (W - 2 * pad) * 0.72, 220, 46, 30, 1.25);
-    ctx.font = font(F.body, b.size, 500); ctx.fillStyle = C.cream; ctx.textAlign = "left";
-    b.lines.forEach((ln, i) => ctx.fillText(ln, pad, y + 170 + b.size + i * b.lh));
+    const b = fitBlock(ctx, s.line, F.body, 500, (W - 2 * pad) * 0.72, 220, 46, 30, 1.25), yy = y;
+    Ly(ctx, "Closing line", ctx => {
+      ctx.font = font(F.body, b.size, 500); ctx.fillStyle = C.cream; ctx.textAlign = "left";
+      b.lines.forEach((ln, i) => ctx.fillText(ln, pad, yy + 170 + b.size + i * b.lh));
+    });
   }
 }
 
@@ -518,6 +578,14 @@ function renderSlide(canvas, i, outW) {
   const slide = cs.slides[i];
   (DRAW[slide.type] || drawFilm)(ctx, { W, H, pad: 72, i, n: cs.slides.length, slide, counts: tallies() });
 }
+
+// Renders slide i twice: flat, and as named layers (bottom to top) for PSD export.
+function renderLayers(i, outW) {
+  const flat = document.createElement("canvas"); renderSlide(flat, i, outW);
+  CAP = []; const scratch = document.createElement("canvas");
+  try { renderSlide(scratch, i, outW); return { flat, layers: CAP }; } finally { CAP = null; }
+}
+window.NS = { makeZip: (...a) => makeZip(...a), renderLayers, count: () => cs.slides.length, label: i => labelOf(cs.slides[i]) };
 
 /* ---------------- editor UI ---------------- */
 const $ = id => document.getElementById(id);
@@ -651,7 +719,7 @@ function renderThumbs() {
   $("strip").querySelectorAll("canvas").forEach((c, i) => { if (cs.slides[i]) renderSlide(c, i, 84 * dpr); });
 }
 function renderMain() {
-  if (document.body.dataset.mode !== "carousel") return;
+  if (document.body.dataset.mode !== "nightshift") return;
   const S = SHAPES[cs.ratio] || SHAPES["3:4"], box = $("cWrap").getBoundingClientRect();
   const s = Math.min((box.width - 40) / S.w, (box.height - 40) / S.h);
   const cw = Math.max(80, Math.floor(S.w * s)), dpr = Math.min(window.devicePixelRatio || 1, 2), c = $("cPreview");
@@ -744,8 +812,9 @@ function setMode(m) {
   document.body.dataset.mode = m;
   try { localStorage.setItem(MODE, m); } catch (e) { /* ignore */ }
   $("modeSeg").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
-  if (m === "carousel") { buildRail(); buildStrip(); schedule(); }
-  else window.dispatchEvent(new Event("resize"));
+  if (m === "nightshift") { buildRail(); buildStrip(); schedule(); }
+  window.dispatchEvent(new CustomEvent("pcs:mode", { detail: m }));
+  window.dispatchEvent(new Event("resize"));
 }
 $("modeSeg").querySelectorAll("button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
@@ -756,15 +825,15 @@ function dropTarget() {
   return null;
 }
 function takeFile(f) {
-  if (document.body.dataset.mode !== "carousel" || !f) return;
+  if (document.body.dataset.mode !== "nightshift" || !f) return;
   const key = dropTarget();
   if (!key) { toast("Select a film, grid or climax slide first, then drop the poster."); return; }
   setPoster(key, f);
 }
 window.addEventListener("drop", e => takeFile(e.dataTransfer?.files?.[0]));
-window.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/")); if (f && document.body.dataset.mode === "carousel") { e.preventDefault(); takeFile(f); } });
+window.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/")); if (f && document.body.dataset.mode === "nightshift") { e.preventDefault(); takeFile(f); } });
 window.addEventListener("keydown", e => {
-  if (document.body.dataset.mode !== "carousel" || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
+  if (document.body.dataset.mode !== "nightshift" || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
   if (e.key === "ArrowRight") { select(sel + 1); e.preventDefault(); }
   if (e.key === "ArrowLeft") { select(sel - 1); e.preventDefault(); }
 });
@@ -778,7 +847,7 @@ new ResizeObserver(() => schedule()).observe($("cWrap"));
   setMode(mode);
   await Promise.allSettled([loadPosters(), ...faces]);
   phCache.clear(); distress = null;
-  if (document.body.dataset.mode === "carousel") { buildRail(); buildStrip(); }
+  if (document.body.dataset.mode === "nightshift") { buildRail(); buildStrip(); }
   schedule();
 })();
 })();
