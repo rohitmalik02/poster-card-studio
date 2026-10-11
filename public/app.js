@@ -632,6 +632,7 @@ function schedule() {
   clearTimeout(saveTimer); saveTimer = setTimeout(save, 400);
 }
 function renderPreview() {
+  if (document.body.dataset.mode === "carousel") return; // carousel.js owns the stage then
   const R = RATIOS[state.ratio]; const box = wrap.getBoundingClientRect();
   const s = Math.min((box.width - 40) / R.w, (box.height - 40) / R.h);
   const cw = Math.max(80, Math.floor(R.w * s)), dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -780,13 +781,14 @@ document.getElementById("bgFile").addEventListener("change", async e => {
 document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; schedule(); });
 
 const veil = document.getElementById("veil"); let dragDepth = 0;
-window.addEventListener("dragenter", e => { if ([...e.dataTransfer.types].includes("Files")) { dragDepth++; veil.hidden = false; } });
+const carouselMode = () => document.body.dataset.mode === "carousel";
+window.addEventListener("dragenter", e => { if (!carouselMode() && [...e.dataTransfer.types].includes("Files")) { dragDepth++; veil.hidden = false; } });
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; veil.hidden = true; } });
 window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; veil.hidden = true; usePosterFile(e.dataTransfer.files[0]); });
+window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; veil.hidden = true; if (!carouselMode()) usePosterFile(e.dataTransfer.files[0]); });
 window.addEventListener("paste", e => {
   const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/"));
-  if (f) { e.preventDefault(); usePosterFile(f); }
+  if (f && !carouselMode()) { e.preventDefault(); usePosterFile(f); }
 });
 
 /* ---------------- export ---------------- */
@@ -844,4 +846,7 @@ async function boot() {
   document.fonts.addEventListener?.("loadingdone", schedule);
 }
 boot();
+
+// Shared with carousel.js
+window.PCS = { RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, cropTo23, readFile, toast, slug };
 })();

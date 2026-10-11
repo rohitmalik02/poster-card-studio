@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Doto:wght@700;800;900&family=Special+Elite&family=Tiro+Devanagari+Hindi&family=Barlow:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -16,16 +16,23 @@
   <main class="stage">
     <div class="topbar">
       <h1 class="brand">Poster Card <em>Studio</em></h1>
+      <div class="seg mode" id="modeSeg" role="group" aria-label="Mode">
+        <button type="button" data-mode="single" aria-pressed="true">Single post</button>
+        <button type="button" data-mode="carousel" aria-pressed="false">Carousel</button>
+      </div>
       <div class="specs" id="specs"></div>
     </div>
-    <div class="canvas-wrap" id="wrap">
+    <div class="canvas-wrap single-only" id="wrap">
       <canvas id="preview" aria-label="Post preview"></canvas>
       <div class="drop-veil" id="veil" hidden>Drop to use as poster</div>
     </div>
-    <p class="hint">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
+    <p class="hint single-only">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
+    <div class="canvas-wrap carousel-only" id="cWrap"><canvas id="cPreview" aria-label="Slide preview"></canvas></div>
+    <div class="strip carousel-only" id="strip" aria-label="Slides"></div>
+    <p class="hint carousel-only">Drop or paste a poster to put it on the selected slide. <kbd>←</kbd> <kbd>→</kbd> switch slides.</p>
   </main>
 
-  <aside class="rail">
+  <aside class="rail single-only">
     <div class="rail-scroll">
       <details open>
         <summary>Poster</summary>
@@ -150,9 +157,31 @@
       <p class="toast" id="toast" role="status"></p>
     </div>
   </aside>
+
+  <aside class="rail carousel-only" id="cRail">
+    <div class="rail-scroll" id="cRailScroll"></div>
+    <div class="exportbar">
+      <div class="row">
+        <div class="field">
+          <label for="cExportW">Export width</label>
+          <select id="cExportW"><option value="1080">1080 px</option><option value="1440">1440 px (sharpest on Instagram)</option></select>
+        </div>
+        <div class="field">
+          <label for="cExportFmt">Format</label>
+          <select id="cExportFmt"><option value="png">PNG</option><option value="jpeg">JPG (95%)</option></select>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="cDownloadAll" type="button">Download all (.zip)</button>
+        <button class="btn" id="cDownloadOne" type="button">This slide</button>
+      </div>
+      <p class="toast" id="cToast" role="status"></p>
+    </div>
+  </aside>
 </div>
 
 <script src="samples.js"></script>
 <script src="app.js"></script>
+<script src="carousel.js"></script>
 </body>
 </html>
