@@ -1,0 +1,10 @@
+# Local-only material: reference screenshots, scratch copies, Windows download markers
+*.png
+*.jpg
+*:Zone.Identifier
+*.Identifier
+.local/
+.wrangler/
+node_modules/
+.DS_Store
+Thumbs.db

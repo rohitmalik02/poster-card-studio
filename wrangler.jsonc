@@ -1,0 +1,8 @@
+// Only needed if you deploy as a Cloudflare Worker (static assets). Cloudflare Pages ignores it.
+{
+  "name": "poster-card-studio",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public"
+  }
+}

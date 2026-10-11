@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Poster Card Studio</title>
+<meta name="description" content="Turn a film poster into a ready-to-post Instagram recommendation card.">
+<meta name="referrer" content="no-referrer">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <main class="stage">
+    <div class="topbar">
+      <h1 class="brand">Poster Card <em>Studio</em></h1>
+      <div class="specs" id="specs"></div>
+    </div>
+    <div class="canvas-wrap" id="wrap">
+      <canvas id="preview" aria-label="Post preview"></canvas>
+      <div class="drop-veil" id="veil" hidden>Drop to use as poster</div>
+    </div>
+    <p class="hint">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
+  </main>
+
+  <aside class="rail">
+    <div class="rail-scroll">
+      <details open>
+        <summary>Poster</summary>
+        <div class="sec">
+          <div class="uploader">
+            <label class="btn primary" for="posterFile">Upload poster</label>
+            <label class="btn" for="bgFile" title="Use a film still for the blurred backdrop instead of the poster">Backdrop still</label>
+            <input type="file" id="posterFile" accept="image/*" hidden>
+            <input type="file" id="bgFile" accept="image/*" hidden>
+          </div>
+          <div class="field">
+            <span class="lbl">Examples</span>
+            <div class="samples" id="samples"></div>
+          </div>
+          <button class="btn" id="clearBg" type="button" hidden>Use poster for backdrop again</button>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Words</summary>
+        <div class="sec">
+          <div class="field"><label for="kicker">Eyebrow</label><input type="text" id="kicker" data-k="kicker"></div>
+          <div class="row">
+            <div class="field"><label for="title">Title</label><input type="text" id="title" data-k="title"></div>
+            <div class="field"><label for="year">Year</label><input type="text" id="year" data-k="year" inputmode="numeric"></div>
+          </div>
+          <div class="row3">
+            <div class="field"><label for="director">Director</label><input type="text" id="director" data-k="director"></div>
+            <div class="field"><label for="runtime">Runtime</label><input type="text" id="runtime" data-k="runtime"></div>
+            <div class="field"><label for="genre">Genre</label><input type="text" id="genre" data-k="genre"></div>
+          </div>
+          <div class="field">
+            <label for="rating">Your rating <output id="ratingOut"></output></label>
+            <input type="range" id="rating" data-k="rating" min="0" max="5" step="0.5">
+          </div>
+          <div class="field">
+            <label for="blurb">Why watch it</label>
+            <textarea id="blurb" data-k="blurb"></textarea>
+            <div class="textmeta"><button class="linkbtn" id="highlight" type="button" title="Select a phrase above, then click">Highlight selection</button><span id="wc"></span></div>
+          </div>
+          <div class="field"><label for="handle">Handle</label><input type="text" id="handle" data-k="handle"></div>
+          <div class="toggles">
+            <label><input type="checkbox" id="showKicker" data-k="show.kicker"> Eyebrow</label>
+            <label><input type="checkbox" id="showMeta" data-k="show.meta"> Year &amp; credits</label>
+            <label><input type="checkbox" id="showStars" data-k="show.stars"> Stars</label>
+            <label><input type="checkbox" id="showBlurb" data-k="show.blurb"> Paragraph</label>
+            <label><input type="checkbox" id="showHandle" data-k="show.handle"> Handle</label>
+          </div>
+        </div>
+      </details>
+
+      <details open>
+        <summary>Format &amp; type</summary>
+        <div class="sec">
+          <div class="field"><span class="lbl">Post shape</span><div class="seg" id="ratioSeg"></div></div>
+          <div class="field"><span class="lbl">Layout</span><div class="seg" id="layoutSeg"></div></div>
+          <div class="field"><span class="lbl">Type style</span><div class="presets" id="presetGrid"></div></div>
+          <div class="toggles"><label><input type="checkbox" id="chrome" data-k="chrome"> Chrome title (comes with Zine, works on any style)</label></div>
+          <div class="field">
+            <span class="lbl">Accent <span>pulled from the poster</span></span>
+            <div class="swatches" id="swatches"></div>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Backdrop</summary>
+        <div class="sec">
+          <div class="field"><label for="bgZoom">Zoom <output data-for="bg.zoom"></output></label><input type="range" id="bgZoom" data-k="bg.zoom" min="1" max="3" step="0.05"></div>
+          <div class="field"><label for="bgShift">Vertical position <output data-for="bg.shift"></output></label><input type="range" id="bgShift" data-k="bg.shift" min="-1" max="1" step="0.05"></div>
+          <div class="field"><label for="bgBlur">Blur <output data-for="bg.blur"></output></label><input type="range" id="bgBlur" data-k="bg.blur" min="0" max="140" step="2"></div>
+          <div class="field"><label for="bgDark">Darkness <output data-for="bg.dark"></output></label><input type="range" id="bgDark" data-k="bg.dark" min="0" max="0.9" step="0.01"></div>
+          <div class="field"><label for="bgSat">Colour boost <output data-for="bg.sat"></output></label><input type="range" id="bgSat" data-k="bg.sat" min="0" max="2.2" step="0.05"></div>
+          <div class="field"><label for="bgTint">Accent tint <output data-for="bg.tint"></output></label><input type="range" id="bgTint" data-k="bg.tint" min="0" max="0.6" step="0.01"></div>
+          <div class="field"><label for="bgVig">Vignette &amp; text shade <output data-for="bg.vignette"></output></label><input type="range" id="bgVig" data-k="bg.vignette" min="0" max="1" step="0.01"></div>
+          <div class="field"><label for="bgGrain">Film grain <output data-for="bg.grain"></output></label><input type="range" id="bgGrain" data-k="bg.grain" min="0" max="0.3" step="0.01"></div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Poster frame</summary>
+        <div class="sec">
+          <div class="field"><label for="pScale">Size <output data-for="poster.scale"></output></label><input type="range" id="pScale" data-k="poster.scale" min="0.6" max="1" step="0.01"></div>
+          <div class="field"><label for="pRadius">Corner radius <output data-for="poster.radius"></output></label><input type="range" id="pRadius" data-k="poster.radius" min="0" max="40" step="1"></div>
+          <div class="field"><label for="pShadow">Shadow <output data-for="poster.shadow"></output></label><input type="range" id="pShadow" data-k="poster.shadow" min="0" max="1" step="0.01"></div>
+          <div class="field"><label for="pGlow">Colour glow <output data-for="poster.glow"></output></label><input type="range" id="pGlow" data-k="poster.glow" min="0" max="1" step="0.01"></div>
+          <div class="toggles"><label><input type="checkbox" id="pBorder" data-k="poster.border"> Hairline edge</label></div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Start over</summary>
+        <div class="sec">
+          <p class="hint">Resets every look setting to the defaults. Your words and poster stay.</p>
+          <button class="btn" id="resetLook" type="button">Reset look</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="exportbar">
+      <div class="row">
+        <div class="field">
+          <label for="exportW">Export width</label>
+          <select id="exportW" data-k="export.width">
+            <option value="1080">1080 px</option>
+            <option value="1440">1440 px (sharpest on Instagram)</option>
+            <option value="2160">2160 px (archive)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="exportFmt">Format</label>
+          <select id="exportFmt" data-k="export.format">
+            <option value="png">PNG</option>
+            <option value="jpeg">JPG (95%)</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="download" type="button">Download post</button>
+        <button class="btn" id="copyCaption" type="button">Copy caption</button>
+      </div>
+      <p class="toast" id="toast" role="status"></p>
+    </div>
+  </aside>
+</div>
+
+<script src="samples.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
