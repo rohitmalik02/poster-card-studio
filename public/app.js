@@ -1025,7 +1025,7 @@ document.getElementById("resetLook").addEventListener("click", () => {
 });
 
 /* ---------------- boot ---------------- */
-const MODE_KEY = "poster-card-studio:mode:v3";
+const MODE_KEY = "poster-card-studio:mode:v4";
 function setMode(m) {
   document.body.dataset.mode = m === "carousel" ? "carousel" : "single";
   try { localStorage.setItem(MODE_KEY, document.body.dataset.mode); } catch (e) { /* ignore */ }
@@ -1036,7 +1036,7 @@ function setMode(m) {
 document.querySelectorAll("#modeSeg button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
 async function boot() {
-  let mode = "single"; try { mode = localStorage.getItem(MODE_KEY) || "single"; } catch (e) { /* ignore */ }
+  let mode = "carousel"; try { mode = localStorage.getItem(MODE_KEY) || "carousel"; } catch (e) { /* ignore */ }
   document.body.dataset.mode = mode;
   document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   syncInputs(); renderSamples();
