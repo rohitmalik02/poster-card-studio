@@ -18,6 +18,8 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 - Type styles: Criterion, Marquee, Arthouse and Zine (chrome lettering)
 - Export as PNG or JPG at 1080, 1440 or 2160 px wide
 - Everything runs in the browser. Images are never uploaded anywhere.
+- Work autosaves in the browser (localStorage for words and settings, IndexedDB for images).
+- **Save project** downloads the whole carousel as one `.json` file: slides, posters, backdrops, cover and look. **Open project** (or dropping the file on the page) loads it back, replacing what's open. Use it for backups, for moving between devices, and for keeping one file per carousel.
 
 ## Run locally
 

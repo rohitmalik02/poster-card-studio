@@ -314,6 +314,10 @@ async function idbGet(key) {
   try { const d = await idb(); return await new Promise(res => { const rq = d.transaction("posters").objectStore("posters").get(key); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); }
   catch (e) { return null; }
 }
+async function idbClear() {
+  const d = await idb();
+  await new Promise((res, rej) => { const tx = d.transaction("posters", "readwrite"); tx.objectStore("posters").clear(); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+}
 function downsized(c, maxW) {
   if (c.width <= maxW) return c;
   const d = document.createElement("canvas"); d.width = maxW; d.height = Math.round(c.height * maxW / c.width);
@@ -797,7 +801,9 @@ function renderPreview() {
 }
 new ResizeObserver(() => schedule()).observe(wrap);
 
+let frozen = false; // set while a project file replaces everything, so nothing old gets written back
 function save() {
+  if (frozen) return;
   saveDeck();
   try {
     const { palette, ...rest } = state;
@@ -934,7 +940,7 @@ document.getElementById("bgFile").addEventListener("change", async e => {
 document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; idbPut(`deck:${deck[cur].id}:bg`, null); schedule(); });
 
 const veil = document.getElementById("veil"); let dragDepth = 0;
-const takeImage = f => { if (coverOn()) window.Cover.takeFile(f); else usePosterFile(f); };
+const takeImage = f => { if (isProjectFile(f)) openProject(f); else if (coverOn()) window.Cover.takeFile(f); else usePosterFile(f); };
 window.addEventListener("dragenter", e => { if ([...e.dataTransfer.types].includes("Files")) { veil.textContent = coverOn() ? "Drop to use as the cover still" : "Drop to use as poster"; dragDepth++; veil.hidden = false; } });
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; veil.hidden = true; } });
 window.addEventListener("dragover", e => e.preventDefault());
@@ -1023,6 +1029,69 @@ document.getElementById("resetLook").addEventListener("click", () => {
   Object.assign(state, clone(LOOK_DEFAULTS)); state.accent = state.palette[0] || state.accent;
   syncInputs(); renderSwatches(); schedule(); toast("Look reset.");
 });
+
+/* ---------------- project files ----------------
+   One .json file holds the whole carousel: the look, every slide's words, the cover, and the images
+   (posters, backdrop stills, cover still) as data URLs. Opening one replaces what this browser holds. */
+const PROJECT_APP = "poster-card-studio", COVER_KEY = "poster-card-studio:cover:v1";
+const isProjectFile = f => !!f && (/\.json$/i.test(f.name) || f.type === "application/json");
+const readJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
+
+async function saveProject() {
+  save(); window.Cover?.flush();
+  const look = readJSON(STORE_KEY), deckData = readJSON(DECK_KEY), cover = readJSON(COVER_KEY);
+  if (!deckData) { toast("Couldn't read this browser's storage, so there's nothing to save."); return; }
+  const images = {};
+  const keys = [...deck.flatMap(sl => [`deck:${sl.id}`, `deck:${sl.id}:bg`]), "cover:still"];
+  for (const k of keys) { const v = await idbGet(k); if (v) images[k] = v; }
+  // Images that never reached storage (storage blocked) still go in, straight from memory.
+  deck.forEach((sl, i) => {
+    const p = i === cur ? posterCanvas : imgs.get(sl.id)?.poster;
+    if (!sl.sample && p && !images[`deck:${sl.id}`]) images[`deck:${sl.id}`] = downsized(p, 1400).toDataURL("image/jpeg", 0.92);
+  });
+  const file = { app: PROJECT_APP, version: 1, savedAt: new Date().toISOString(), look, deck: deckData, cover, images };
+  const name = cover?.enabled ? [cover.kicker, cover.title].filter(Boolean).join(" ") : (deck[0] && (cur === 0 ? state.title : deck[0].title));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+  a.download = `${slug(name || "carousel") || "carousel"}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`Project saved: ${deck.length} slide${deck.length === 1 ? "" : "s"}${cover?.enabled ? " and the cover" : ""}.`);
+}
+
+const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
+const IMAGE_KEY = /^(deck:[a-z0-9]{1,16}(:bg)?|cover:still)$/;
+const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i;
+function checkProject(p) {
+  if (!isObj(p) || p.app !== PROJECT_APP || typeof p.version !== "number") return "That isn't a Poster Card Studio project file.";
+  if (p.version > 1) return "That project was saved by a newer version. Refresh the page and try again.";
+  const slides = p.deck?.slides;
+  if (!Array.isArray(slides) || !slides.length || slides.length > 20) return "That project has no readable slides.";
+  if (!slides.every(sl => isObj(sl) && typeof sl.id === "string" && /^[a-z0-9]{1,16}$/.test(sl.id))) return "That project's slides are damaged.";
+  if ((p.look != null && !isObj(p.look)) || (p.cover != null && !isObj(p.cover)) || !isObj(p.images)) return "That project file is damaged.";
+  for (const [k, v] of Object.entries(p.images)) if (!IMAGE_KEY.test(k) || typeof v !== "string" || !DATA_IMAGE.test(v)) return "That project's images are damaged.";
+  return null;
+}
+async function openProject(file) {
+  if (!file) return;
+  let p = null;
+  try { p = JSON.parse(await file.text()); } catch (e) { toast("Couldn't read that file. Is it a project .json saved from here?"); return; }
+  const problem = checkProject(p); if (problem) { toast(problem); return; }
+  const n = p.deck.slides.length;
+  if (!confirm(`Open "${file.name}" (${n} slide${n === 1 ? "" : "s"})?\n\nThis replaces the carousel you have open now. Save it as a project first if you want to keep it.`)) return;
+  frozen = true; window.Cover?.hold(); clearTimeout(saveTimer);
+  try {
+    await idbClear();
+    for (const [k, v] of Object.entries(p.images)) await idbPut(k, v);
+    const at = Math.max(0, Math.min(+p.deck.cur || 0, n - 1));
+    localStorage.setItem(DECK_KEY, JSON.stringify({ cur: at, slides: p.deck.slides }));
+    if (p.look) localStorage.setItem(STORE_KEY, JSON.stringify(p.look)); else localStorage.removeItem(STORE_KEY);
+    if (p.cover) localStorage.setItem(COVER_KEY, JSON.stringify(p.cover)); else localStorage.removeItem(COVER_KEY);
+  } catch (e) { frozen = false; toast("This browser wouldn't store the project (private window or full storage?)."); return; }
+  location.reload();
+}
+document.getElementById("saveProject").addEventListener("click", saveProject);
+document.getElementById("openProject").addEventListener("click", () => document.getElementById("projectFile").click());
+document.getElementById("projectFile").addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; openProject(f); });
 
 /* ---------------- boot ---------------- */
 const MODE_KEY = "poster-card-studio:mode:v4";

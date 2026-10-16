@@ -20,6 +20,11 @@
         <button type="button" data-mode="carousel" aria-pressed="true">Carousel</button>
         <button type="button" data-mode="single" aria-pressed="false">Single post</button>
       </div>
+      <div class="project" role="group" aria-label="Project">
+        <button class="btn small" id="saveProject" type="button" title="Download everything (slides, posters, cover, look) as one .json file">Save project</button>
+        <button class="btn small" id="openProject" type="button" title="Open a project .json saved from here. You can also drop it on the page.">Open project</button>
+        <input type="file" id="projectFile" accept=".json,application/json" hidden>
+      </div>
       <div class="specs" id="specs"></div>
     </div>
     <div class="canvas-wrap postcard-only" id="wrap">

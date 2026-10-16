@@ -18,7 +18,8 @@ let hero = { ...DEFAULTS };
 try { Object.assign(hero, JSON.parse(localStorage.getItem(STORE) || "{}")); } catch (e) { /* storage unavailable */ }
 let still = null, stillPal = null;
 let saveT = 0;
-const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem(STORE, JSON.stringify(hero)); } catch (e) { /* ignore */ } }, 300); };
+const flush = () => { clearTimeout(saveT); try { localStorage.setItem(STORE, JSON.stringify(hero)); } catch (e) { /* ignore */ } };
+const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
 const changed = () => { save(); P.schedule(); };
 
 /* ---------------- colour helpers ---------------- */
@@ -372,7 +373,7 @@ async function takeFile(file) {
 $("cvStillFile").addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; takeFile(f); });
 
 window.Cover = {
-  render, sync, takeFile, refresh,
+  render, sync, takeFile, refresh, flush, hold: () => clearTimeout(saveT),
   enabled: () => !!hero.enabled,
   setEnabled: v => { hero.enabled = !!v; changed(); },
   title: () => hero.title || "cover",
