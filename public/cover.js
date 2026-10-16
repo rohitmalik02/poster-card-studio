@@ -12,6 +12,7 @@ const DEFAULTS = {
   align: "left", vpos: "bottom", color: null, shade: 0.5,
   focusX: 0.5, focusY: 0.5, zoom: 1,
   swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
+  source: "all", sourceId: null, // essence colours: every poster, or one film
 };
 let hero = { ...DEFAULTS };
 try { Object.assign(hero, JSON.parse(localStorage.getItem(STORE) || "{}")); } catch (e) { /* storage unavailable */ }
@@ -59,8 +60,12 @@ function coloursOf(src) {
   colourCache.set(src, out); return out;
 }
 const FALLBACK = [{ rgb: [16, 15, 22], w: 0.6 }, { rgb: [44, 40, 58], w: 0.28 }, { rgb: [128, 116, 150], w: 0.08 }, { rgb: [200, 170, 140], w: 0.04 }];
+// Slides that have a poster, and the one the essence is currently drawn from (when source is "one").
+function sourceSlides() { return P.deckSlides().map((s, i) => ({ ...s, n: i + 1 })).filter(s => s.poster); }
+function sourceSlide() { const list = sourceSlides(); return list.find(s => s.id === hero.sourceId) || list[0] || null; }
 function deckPalette() {
-  const posters = P.deckPosters(); if (!posters.length) return FALLBACK;
+  const one = hero.source === "one" ? sourceSlide() : null;
+  const posters = one ? [one.poster] : P.deckPosters(); if (!posters.length) return FALLBACK;
   const all = []; for (const p of posters) for (const c of coloursOf(p)) all.push({ ...c, w: c.w / posters.length });
   const merged = [];
   for (const c of all.sort((a, b) => b.w - a.w)) {
@@ -316,8 +321,27 @@ function sync() {
   document.querySelectorAll("output[data-cvo]").forEach(o => (o.textContent = FMT[o.dataset.cvo](hero[o.dataset.cvo])));
   seg("cvDesign", "design", () => { hero.color = null; }); seg("cvAlign", "align"); seg("cvPos", "vpos");
   $("cvEssenceCtl").hidden = hero.design !== "essence"; $("cvStillCtl").hidden = hero.design !== "still";
+  seg("cvSource", "source", () => { if (!hero.sourceId) hero.sourceId = sourceSlide()?.id || null; });
+  refresh();
+}
+// Updates the parts that depend on the deck (film picker label, text colours); called when slides change.
+function refresh() {
+  const one = hero.source === "one", list = sourceSlides(), s = sourceSlide();
+  $("cvCycler").hidden = !one;
+  if (one) {
+    $("cvSourceName").textContent = s ? `Slide ${s.n} of ${P.deckCount()} · ${s.title || "Untitled"}` : "Add a poster to a slide first";
+    $("cvPrev").disabled = $("cvNext").disabled = list.length < 2;
+  }
   renderSwatches();
 }
+function cycle(d) {
+  const list = sourceSlides(); if (!list.length) return;
+  const i = Math.max(0, list.findIndex(s => s.id === sourceSlide()?.id));
+  hero.sourceId = list[(i + d + list.length) % list.length].id; hero.color = null;
+  refresh(); changed();
+}
+$("cvPrev").addEventListener("click", () => cycle(-1));
+$("cvNext").addEventListener("click", () => cycle(1));
 document.querySelectorAll("[data-cv]").forEach(el => el.addEventListener("input", () => {
   const k = el.dataset.cv; hero[k] = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
   const o = document.querySelector(`output[data-cvo="${k}"]`); if (o) o.textContent = FMT[k](hero[k]);
@@ -342,7 +366,7 @@ async function takeFile(file) {
 $("cvStillFile").addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; takeFile(f); });
 
 window.Cover = {
-  render, sync, takeFile,
+  render, sync, takeFile, refresh,
   enabled: () => !!hero.enabled,
   setEnabled: v => { hero.enabled = !!v; changed(); },
   title: () => hero.title || "cover",

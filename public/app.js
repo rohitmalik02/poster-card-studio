@@ -269,6 +269,7 @@ function renderDeck() {
   });
   const add = document.createElement("button"); add.type = "button"; add.className = "add"; add.textContent = "+ Add slide"; add.addEventListener("click", addSlide);
   box.append(add);
+  window.Cover?.refresh();
   renderThumbs();
 }
 function renderThumbs() {
@@ -1069,10 +1070,11 @@ async function boot() {
 boot();
 
 // Shared with cover.js
-const deckPosters = () => deck.map((sl, i) => (i === cur ? posterCanvas : imgs.get(sl.id)?.poster)).filter(Boolean);
+const deckSlides = () => deck.map((sl, i) => ({ id: sl.id, title: i === cur ? state.title : sl.title, poster: (i === cur ? posterCanvas : imgs.get(sl.id)?.poster) || null }));
+const deckPosters = () => deckSlides().map(s => s.poster).filter(Boolean);
 window.PCS = {
   RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
-  get state() { return state; }, preset: P, deckPosters, deckCount: () => deck.length,
+  get state() { return state; }, preset: P, deckPosters, deckSlides, deckCount: () => deck.length,
   drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
   extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(),
 };

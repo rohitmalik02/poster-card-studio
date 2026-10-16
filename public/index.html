@@ -43,7 +43,18 @@
             </div>
           </div>
           <div class="sec-inner" id="cvEssenceCtl">
-            <p class="hint">Blends the colours of every poster in this carousel into one swirl. Add or swap posters and it shifts with them.</p>
+            <div class="field">
+              <span class="lbl">Colours from</span>
+              <div class="seg" id="cvSource">
+                <button type="button" data-v="all">All posters<small>blends as you add films</small></button>
+                <button type="button" data-v="one">One film<small>cycle through 1 to N</small></button>
+              </div>
+            </div>
+            <div class="cycler" id="cvCycler">
+              <button class="icon-btn" id="cvPrev" type="button" aria-label="Previous film">‹</button>
+              <span id="cvSourceName" aria-live="polite"></span>
+              <button class="icon-btn" id="cvNext" type="button" aria-label="Next film">›</button>
+            </div>
             <div class="field"><label for="cvSwirl">Swirl <output data-cvo="swirl"></output></label><input type="range" id="cvSwirl" data-cv="swirl" min="0" max="1" step="0.01"></div>
             <div class="field"><label for="cvFlow">Flow <output data-cvo="flow"></output></label><input type="range" id="cvFlow" data-cv="flow" min="0" max="1" step="0.01"></div>
             <div class="field"><label for="cvGlass">Glassy blur <output data-cvo="glass"></output></label><input type="range" id="cvGlass" data-cv="glass" min="0" max="1" step="0.01"></div>
