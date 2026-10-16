@@ -196,9 +196,15 @@ function drawStill(ctx, W, H) {
 function drawShade(ctx, W, H, strength) {
   if (strength <= 0) return;
   ctx.fillStyle = `rgba(0,0,0,${strength * 0.18})`; ctx.fillRect(0, 0, W, H);
-  const bottom = hero.vpos === "bottom", g = ctx.createLinearGradient(0, bottom ? H : 0, 0, bottom ? H * 0.3 : H * 0.7);
-  g.addColorStop(0, `rgba(0,0,0,${strength * 0.92})`); g.addColorStop(0.45, `rgba(0,0,0,${strength * 0.5})`); g.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  if (hero.vpos === "middle") { // a soft band behind the words instead of a rise from one edge
+    const g = ctx.createLinearGradient(0, H * 0.18, 0, H * 0.82);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(0.5, `rgba(0,0,0,${strength * 0.72})`); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  } else {
+    const bottom = hero.vpos === "bottom", g = ctx.createLinearGradient(0, bottom ? H : 0, 0, bottom ? H * 0.3 : H * 0.7);
+    g.addColorStop(0, `rgba(0,0,0,${strength * 0.92})`); g.addColorStop(0.45, `rgba(0,0,0,${strength * 0.5})`); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
   if (hero.align !== "center") {
     const left = hero.align === "left", s = ctx.createLinearGradient(left ? 0 : W, 0, left ? W * 0.8 : W * 0.2, 0);
     s.addColorStop(0, `rgba(0,0,0,${strength * 0.38})`); s.addColorStop(1, "rgba(0,0,0,0)");
@@ -248,7 +254,7 @@ function drawWords(ctx, W, H, K) {
   }
   const n = P.deckCount();
   if (hero.count && n) { h += 34; items.push({ k: "label", text: `${n} FILM${n === 1 ? "" : "S"} INSIDE   →`, size: 21, color: "rgba(255,255,255,0.78)", track: p.label.track * 0.7, y: h, tinted: true }); h += 21; }
-  const top = hero.vpos === "bottom" ? H - pad - h : pad + 40;
+  const top = hero.vpos === "bottom" ? H - pad - h : hero.vpos === "middle" ? (H - h) / 2 : pad + 40;
   ctx.textBaseline = "alphabetic";
   for (const it of items) {
     const y = top + it.y;
@@ -274,7 +280,7 @@ function drawWords(ctx, W, H, K) {
   const handle = (st.show?.handle && (st.handle || "").trim()) || "";
   if (handle) {
     ctx.font = P.fontStr(p.label, 19); ctx.fillStyle = color; ctx.globalAlpha = 0.7;
-    const y = hero.vpos === "bottom" ? pad + 19 : H - pad;
+    const y = hero.vpos === "top" ? H - pad : pad + 19; // opposite edge; with middle text it sits at the top
     P.drawTracked(ctx, handle, x, y, p.label.track * 0.4, 19, align); ctx.globalAlpha = 1;
   }
 }
