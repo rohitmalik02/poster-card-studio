@@ -202,8 +202,17 @@ function withSlide(i, fn) {
   stash(); const back = cur, keepLong = tooLong; loadSlide(i);
   try { return fn(); } finally { loadSlide(back); tooLong = keepLong; }
 }
+// The cover sits in front of slide 1 in Carousel mode; cover.js draws it.
+let onCover = false;
+const coverOn = () => document.body.dataset.mode === "carousel" && onCover && !!window.Cover?.enabled();
+function syncCoverFlag() { if (coverOn()) document.body.dataset.cover = "1"; else delete document.body.dataset.cover; }
+function selectCover() {
+  if (!window.Cover?.enabled()) return;
+  stash(); onCover = true; syncCoverFlag(); window.Cover.sync(); renderDeck(); schedule();
+}
 function selectSlide(i) {
   if (i < 0 || i >= deck.length) return;
+  onCover = false; syncCoverFlag();
   stash(); loadSlide(i);
   document.getElementById("clearBg").hidden = !bgImage;
   syncInputs(); renderSamples(); renderSwatches(); renderDeck(); schedule();
@@ -234,14 +243,27 @@ function moveSlide(i, d) {
 let thumbTimer = 0;
 function renderDeck() {
   const box = document.getElementById("deck"); box.innerHTML = "";
+  const mk = (txt, label, fn) => { const t = document.createElement("button"); t.type = "button"; t.className = "icon-btn"; t.textContent = txt; t.title = label; t.setAttribute("aria-label", label); t.addEventListener("click", fn); return t; };
+  if (window.Cover?.enabled()) {
+    const slot = document.createElement("div"); slot.className = "slot cover-slot";
+    const b = document.createElement("button"); b.type = "button"; b.className = "thumb"; b.setAttribute("aria-current", String(onCover)); b.setAttribute("aria-label", "Cover");
+    const c = document.createElement("canvas"); c.style.width = "72px"; c.dataset.i = "cover"; const tag = document.createElement("span"); tag.textContent = "Cover";
+    b.append(c, tag); b.addEventListener("click", selectCover);
+    const tools = document.createElement("div"); tools.className = "tools";
+    tools.append(mk("✕", "Remove the cover", () => { window.Cover.setEnabled(false); if (onCover) selectSlide(cur); else renderDeck(); toast("Cover removed. Add it back from the strip."); }));
+    slot.append(b, tools); box.append(slot);
+  } else if (window.Cover) {
+    const add = document.createElement("button"); add.type = "button"; add.className = "add"; add.textContent = "+ Cover";
+    add.addEventListener("click", () => { window.Cover.setEnabled(true); selectCover(); });
+    box.append(add);
+  }
   deck.forEach((sl, i) => {
     const slot = document.createElement("div"); slot.className = "slot";
     const b = document.createElement("button"); b.type = "button"; b.className = "thumb";
-    b.setAttribute("aria-current", String(i === cur)); b.setAttribute("aria-label", `Slide ${i + 1}: ${i === cur ? state.title : sl.title}`);
-    const c = document.createElement("canvas"); c.style.width = "72px"; const tag = document.createElement("span"); tag.textContent = String(i + 1);
+    b.setAttribute("aria-current", String(i === cur && !onCover)); b.setAttribute("aria-label", `Slide ${i + 1}: ${i === cur ? state.title : sl.title}`);
+    const c = document.createElement("canvas"); c.style.width = "72px"; c.dataset.i = String(i); const tag = document.createElement("span"); tag.textContent = String(i + 1);
     b.append(c, tag); b.addEventListener("click", () => selectSlide(i));
     const tools = document.createElement("div"); tools.className = "tools";
-    const mk = (txt, label, fn) => { const t = document.createElement("button"); t.type = "button"; t.className = "icon-btn"; t.textContent = txt; t.title = label; t.setAttribute("aria-label", label); t.addEventListener("click", fn); return t; };
     tools.append(mk("←", `Move slide ${i + 1} left`, () => moveSlide(i, -1)), mk("→", `Move slide ${i + 1} right`, () => moveSlide(i, 1)), mk("✕", `Delete slide ${i + 1}`, () => deleteSlide(i)));
     slot.append(b, tools); box.append(slot);
   });
@@ -252,7 +274,10 @@ function renderDeck() {
 function renderThumbs() {
   if (document.body.dataset.mode !== "carousel") return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  document.querySelectorAll("#deck canvas").forEach((c, i) => { if (deck[i]) withSlide(i, () => render(c, 72 * dpr)); });
+  document.querySelectorAll("#deck canvas").forEach(c => {
+    if (c.dataset.i === "cover") window.Cover?.render(c, 72 * dpr);
+    else if (deck[+c.dataset.i]) withSlide(+c.dataset.i, () => render(c, 72 * dpr));
+  });
 }
 function saveDeck() {
   stash();
@@ -752,13 +777,17 @@ function schedule() {
   clearTimeout(saveTimer); saveTimer = setTimeout(save, 400);
 }
 function renderPreview() {
-  if (document.body.dataset.mode === "nightshift") return; // nightshift.js owns the stage then
   const R = RATIOS[state.ratio]; const box = wrap.getBoundingClientRect();
   const s = Math.min((box.width - 40) / R.w, (box.height - 40) / R.h);
   const cw = Math.max(80, Math.floor(R.w * s)), dpr = Math.min(window.devicePixelRatio || 1, 2);
   preview.style.width = cw + "px"; preview.style.height = Math.round(cw * R.h / R.w) + "px";
-  const used = render(preview, cw * dpr);
   const ew = +state.export.width, eh = Math.round(ew * R.h / R.w);
+  if (coverOn()) {
+    window.Cover.render(preview, cw * dpr);
+    document.getElementById("specs").innerHTML = `<b>${state.ratio}</b> ${R.name} · Cover · ${window.Cover.designName()} · exports <b>${ew} × ${eh}</b>`;
+    return;
+  }
+  const used = render(preview, cw * dpr);
   const slideInfo = document.body.dataset.mode === "carousel" ? ` · slide <b>${cur + 1}/${deck.length}</b>` : "";
   document.getElementById("specs").innerHTML =
     `<b>${state.ratio}</b> ${R.name} · ${LAYOUTS[used].name}${slideInfo} · exports <b>${ew} × ${eh}</b>`;
@@ -904,29 +933,50 @@ document.getElementById("bgFile").addEventListener("change", async e => {
 document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; idbPut(`deck:${deck[cur].id}:bg`, null); schedule(); });
 
 const veil = document.getElementById("veil"); let dragDepth = 0;
-const carouselMode = () => document.body.dataset.mode === "nightshift"; // Night Shift handles its own drops
-window.addEventListener("dragenter", e => { if (!carouselMode() && [...e.dataTransfer.types].includes("Files")) { dragDepth++; veil.hidden = false; } });
+const takeImage = f => { if (coverOn()) window.Cover.takeFile(f); else usePosterFile(f); };
+window.addEventListener("dragenter", e => { if ([...e.dataTransfer.types].includes("Files")) { veil.textContent = coverOn() ? "Drop to use as the cover still" : "Drop to use as poster"; dragDepth++; veil.hidden = false; } });
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; veil.hidden = true; } });
 window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; veil.hidden = true; if (!carouselMode()) usePosterFile(e.dataTransfer.files[0]); });
+window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; veil.hidden = true; if (e.dataTransfer.files[0]) takeImage(e.dataTransfer.files[0]); });
 window.addEventListener("paste", e => {
   const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/"));
-  if (f && !carouselMode()) { e.preventDefault(); usePosterFile(f); }
+  if (f) { e.preventDefault(); takeImage(f); }
 });
 
 /* ---------------- export ---------------- */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+// Minimal "stored" (uncompressed) zip; PNG/JPG are already compressed.
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let offset = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name), crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(12, 33, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true);
+    parts.push(lh, name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(14, 33, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(ch, name); offset += 30 + name.length + size;
+  }
+  const csize = central.reduce((a, p) => a + p.byteLength, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, csize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
+}
 const slug = s => (s || "post").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 let toastTimer;
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.textContent = ""), 4000); }
 
 document.getElementById("download").addEventListener("click", () => {
-  const c = document.createElement("canvas");
-  render(c, +state.export.width);
+  const c = document.createElement("canvas"), cov = coverOn();
+  if (cov) window.Cover.render(c, +state.export.width); else render(c, +state.export.width);
   const fmt = state.export.format === "jpeg" ? "image/jpeg" : "image/png";
   c.toBlob(blob => {
     if (!blob) { toast("Export failed. Try PNG, or a smaller export width."); return; }
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    a.download = `${slug(state.title)}-${state.ratio.replace(":", "x")}.${fmt === "image/png" ? "png" : "jpg"}`;
+    a.download = `${slug(cov ? window.Cover.title() + "-cover" : state.title)}-${state.ratio.replace(":", "x")}.${fmt === "image/png" ? "png" : "jpg"}`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000);
     toast(`Saved ${c.width} × ${c.height} ${fmt === "image/png" ? "PNG" : "JPG"}.`);
@@ -936,14 +986,19 @@ document.getElementById("download").addEventListener("click", () => {
 document.getElementById("downloadAll").addEventListener("click", async () => {
   const btn = document.getElementById("downloadAll"), fmt = state.export.format === "jpeg" ? "image/jpeg" : "image/png", ext = fmt === "image/png" ? "png" : "jpg";
   btn.disabled = true; const files = [];
+  const withCover = !!window.Cover?.enabled(), total = deck.length + (withCover ? 1 : 0);
+  const add = async (c, name) => {
+    const blob = await new Promise(r => c.toBlob(r, fmt, 0.95)); if (!blob) throw new Error("render");
+    files.push({ name: `${String(files.length + 1).padStart(2, "0")}-${name}.${ext}`, data: new Uint8Array(await blob.arrayBuffer()) });
+  };
   try {
+    if (withCover) { btn.textContent = `Rendering 1/${total}…`; const c = document.createElement("canvas"); window.Cover.render(c, +state.export.width); await add(c, "cover"); }
     for (let i = 0; i < deck.length; i++) {
-      btn.textContent = `Rendering ${i + 1}/${deck.length}…`;
+      btn.textContent = `Rendering ${files.length + 1}/${total}…`;
       const c = document.createElement("canvas"); const title = withSlide(i, () => { render(c, +state.export.width); return state.title; });
-      const blob = await new Promise(r => c.toBlob(r, fmt, 0.95)); if (!blob) throw new Error("render");
-      files.push({ name: `${String(i + 1).padStart(2, "0")}-${slug(title)}.${ext}`, data: new Uint8Array(await blob.arrayBuffer()) });
+      await add(c, slug(title));
     }
-    const a = document.createElement("a"); a.href = URL.createObjectURL(window.NS.makeZip(files)); a.download = `carousel-${state.ratio.replace(":", "x")}.zip`;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(makeZip(files)); a.download = `carousel-${state.ratio.replace(":", "x")}.zip`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`Saved ${files.length} slides as a zip.`);
   } catch (e) { toast("Export failed. Try JPG, or a smaller export width."); }
@@ -969,7 +1024,20 @@ document.getElementById("resetLook").addEventListener("click", () => {
 });
 
 /* ---------------- boot ---------------- */
+const MODE_KEY = "poster-card-studio:mode:v3";
+function setMode(m) {
+  document.body.dataset.mode = m === "carousel" ? "carousel" : "single";
+  try { localStorage.setItem(MODE_KEY, document.body.dataset.mode); } catch (e) { /* ignore */ }
+  document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === document.body.dataset.mode)));
+  syncCoverFlag(); if (coverOn()) window.Cover.sync();
+  renderDeck(); schedule();
+}
+document.querySelectorAll("#modeSeg button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
 async function boot() {
+  let mode = "single"; try { mode = localStorage.getItem(MODE_KEY) || "single"; } catch (e) { /* ignore */ }
+  document.body.dataset.mode = mode;
+  document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   syncInputs(); renderSamples();
   // Make sure canvas fonts are ready before the first real render.
   const faces = [];
@@ -990,17 +1058,22 @@ async function boot() {
   loadSlide(cur);
   document.getElementById("clearBg").hidden = !bgImage;
   syncInputs(); renderSamples(); renderSwatches(); renderDeck();
-  window.addEventListener("pcs:mode", e => { if (e.detail === "carousel") renderDeck(); schedule(); });
   window.addEventListener("keydown", e => {
     if (document.body.dataset.mode !== "carousel" || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
-    if (e.key === "ArrowRight") { selectSlide(cur + 1); e.preventDefault(); }
-    if (e.key === "ArrowLeft") { selectSlide(cur - 1); e.preventDefault(); }
+    if (e.key === "ArrowRight") { if (coverOn()) selectSlide(0); else selectSlide(cur + 1); e.preventDefault(); }
+    if (e.key === "ArrowLeft") { if (!coverOn() && cur === 0) selectCover(); else if (!coverOn()) selectSlide(cur - 1); e.preventDefault(); }
   });
   await fontsReady; schedule();
   document.fonts.addEventListener?.("loadingdone", schedule);
 }
 boot();
 
-// Shared with nightshift.js
-window.PCS = { RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, cropTo23, readFile, toast, slug };
+// Shared with cover.js
+const deckPosters = () => deck.map((sl, i) => (i === cur ? posterCanvas : imgs.get(sl.id)?.poster)).filter(Boolean);
+window.PCS = {
+  RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
+  get state() { return state; }, preset: P, deckPosters, deckCount: () => deck.length,
+  drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
+  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(),
+};
 })();

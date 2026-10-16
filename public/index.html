@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Doto:wght@700;800;900&family=Special+Elite&family=Tiro+Devanagari+Hindi&family=Barlow:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -19,7 +19,6 @@
       <div class="seg mode" id="modeSeg" role="group" aria-label="Mode">
         <button type="button" data-mode="single" aria-pressed="true">Single post</button>
         <button type="button" data-mode="carousel" aria-pressed="false">Carousel</button>
-        <button type="button" data-mode="nightshift" aria-pressed="false">Night Shift</button>
       </div>
       <div class="specs" id="specs"></div>
     </div>
@@ -29,14 +28,55 @@
     </div>
     <div class="deck deck-only" id="deck" aria-label="Carousel slides"></div>
     <p class="hint postcard-only">Drop a poster anywhere, or paste one with <kbd>Ctrl</kbd>+<kbd>V</kbd>. Posters that aren't 2:3 get centre-cropped.</p>
-    <div class="canvas-wrap ns-only" id="cWrap"><canvas id="cPreview" aria-label="Slide preview"></canvas></div>
-    <div class="strip ns-only" id="strip" aria-label="Slides"></div>
-    <p class="hint ns-only">Drop or paste a poster to put it on the selected slide. <kbd>←</kbd> <kbd>→</kbd> switch slides.</p>
   </main>
 
   <aside class="rail postcard-only">
     <div class="rail-scroll">
-      <details open>
+      <details open class="cover-only">
+        <summary>Cover</summary>
+        <div class="sec">
+          <div class="field">
+            <span class="lbl">Design</span>
+            <div class="seg" id="cvDesign">
+              <button type="button" data-v="essence">Colour essence<small>made from your posters</small></button>
+              <button type="button" data-v="still">Film still<small>your photo</small></button>
+            </div>
+          </div>
+          <div class="sec-inner" id="cvEssenceCtl">
+            <p class="hint">Blends the colours of every poster in this carousel into one swirl. Add or swap posters and it shifts with them.</p>
+            <div class="field"><label for="cvSwirl">Swirl <output data-cvo="swirl"></output></label><input type="range" id="cvSwirl" data-cv="swirl" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="cvFlow">Flow <output data-cvo="flow"></output></label><input type="range" id="cvFlow" data-cv="flow" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="cvGlass">Glassy blur <output data-cvo="glass"></output></label><input type="range" id="cvGlass" data-cv="glass" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="cvGlitter">Glitter sand <output data-cvo="glitter"></output></label><input type="range" id="cvGlitter" data-cv="glitter" min="0" max="1" step="0.01"></div>
+            <button class="btn" id="cvShuffle" type="button">Reshuffle the swirl</button>
+          </div>
+          <div class="sec-inner" id="cvStillCtl">
+            <label class="btn primary" for="cvStillFile">Upload film still</label>
+            <input type="file" id="cvStillFile" accept="image/*" hidden>
+            <div class="field"><label for="cvFocusX">Framing, left to right <output data-cvo="focusX"></output></label><input type="range" id="cvFocusX" data-cv="focusX" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="cvFocusY">Framing, top to bottom <output data-cvo="focusY"></output></label><input type="range" id="cvFocusY" data-cv="focusY" min="0" max="1" step="0.01"></div>
+            <div class="field"><label for="cvZoom">Zoom <output data-cvo="zoom"></output></label><input type="range" id="cvZoom" data-cv="zoom" min="1" max="2.5" step="0.01"></div>
+          </div>
+        </div>
+      </details>
+
+      <details open class="cover-only">
+        <summary>Cover words</summary>
+        <div class="sec">
+          <div class="field"><label for="cvKicker">Eyebrow</label><input type="text" id="cvKicker" data-cv="kicker"></div>
+          <div class="field"><label for="cvTitle">Title</label><input type="text" id="cvTitle" data-cv="title"></div>
+          <div class="field"><label for="cvLine">Line under the title</label><textarea id="cvLine" data-cv="line" rows="2"></textarea></div>
+          <div class="toggles"><label><input type="checkbox" id="cvCount" data-cv="count"> Show film count ("12 films inside")</label></div>
+          <div class="row">
+            <div class="field"><span class="lbl">Align</span><div class="seg" id="cvAlign"><button type="button" data-v="left">Left</button><button type="button" data-v="center">Centre</button><button type="button" data-v="right">Right</button></div></div>
+            <div class="field"><span class="lbl">Position</span><div class="seg" id="cvPos"><button type="button" data-v="bottom">Bottom</button><button type="button" data-v="top">Top</button></div></div>
+          </div>
+          <div class="field"><span class="lbl">Text colour <span>picked to read well on this cover</span></span><div class="swatches" id="cvSwatches"></div></div>
+          <div class="field"><label for="cvShade">Readability shade <output data-cvo="shade"></output></label><input type="range" id="cvShade" data-cv="shade" min="0" max="1" step="0.01"></div>
+        </div>
+      </details>
+
+      <details class="cover-hide" open>
         <summary>Poster</summary>
         <div class="sec">
           <div class="uploader">
@@ -53,7 +93,7 @@
         </div>
       </details>
 
-      <details open>
+      <details class="cover-hide" open>
         <summary>Words</summary>
         <div class="sec">
           <div class="field"><label for="kicker">Eyebrow</label><input type="text" id="kicker" data-k="kicker"></div>
@@ -90,17 +130,17 @@
         <summary>Format &amp; type</summary>
         <div class="sec">
           <div class="field"><span class="lbl">Post shape</span><div class="seg" id="ratioSeg"></div></div>
-          <div class="field"><span class="lbl">Layout</span><div class="seg" id="layoutSeg"></div></div>
+          <div class="field cover-hide"><span class="lbl">Layout</span><div class="seg" id="layoutSeg"></div></div>
           <div class="field"><span class="lbl">Type style</span><div class="presets" id="presetGrid"></div></div>
           <div class="toggles"><label><input type="checkbox" id="chrome" data-k="chrome"> Chrome title (comes with Zine, works on any style)</label></div>
-          <div class="field">
+          <div class="field cover-hide">
             <span class="lbl">Accent <span>pulled from the poster</span></span>
             <div class="swatches" id="swatches"></div>
           </div>
         </div>
       </details>
 
-      <details>
+      <details class="cover-hide">
         <summary>Backdrop</summary>
         <div class="sec">
           <div class="field"><label for="bgZoom">Zoom <output data-for="bg.zoom"></output></label><input type="range" id="bgZoom" data-k="bg.zoom" min="1" max="3" step="0.05"></div>
@@ -114,7 +154,7 @@
         </div>
       </details>
 
-      <details>
+      <details class="cover-hide">
         <summary>Poster frame</summary>
         <div class="sec">
           <div class="field"><label for="pScale">Size <output data-for="poster.scale"></output></label><input type="range" id="pScale" data-k="poster.scale" min="0.6" max="1" step="0.01"></div>
@@ -125,7 +165,7 @@
         </div>
       </details>
 
-      <details>
+      <details class="cover-hide">
         <summary>Start over</summary>
         <div class="sec">
           <p class="hint">Resets every look setting to the defaults. Your words and poster stay.</p>
@@ -163,30 +203,10 @@
     </div>
   </aside>
 
-  <aside class="rail ns-only" id="cRail">
-    <div class="rail-scroll" id="cRailScroll"></div>
-    <div class="exportbar">
-      <div class="row">
-        <div class="field">
-          <label for="cExportW">Export width</label>
-          <select id="cExportW"><option value="1080">1080 px</option><option value="1440">1440 px (sharpest on Instagram)</option></select>
-        </div>
-        <div class="field">
-          <label for="cExportFmt">Format</label>
-          <select id="cExportFmt"><option value="png">PNG</option><option value="jpeg">JPG (95%)</option></select>
-        </div>
-      </div>
-      <div class="actions">
-        <button class="btn primary" id="cDownloadAll" type="button">Download all (.zip)</button>
-        <button class="btn" id="cDownloadOne" type="button">This slide</button>
-      </div>
-      <p class="toast" id="cToast" role="status"></p>
-    </div>
-  </aside>
 </div>
 
 <script src="samples.js"></script>
 <script src="app.js"></script>
-<script src="nightshift.js"></script>
+<script src="cover.js"></script>
 </body>
 </html>

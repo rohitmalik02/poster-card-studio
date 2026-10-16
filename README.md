@@ -9,8 +9,7 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 ## Modes
 
 - **Single post:** one postcard.
-- **Carousel:** a deck of up to 20 postcards. Each slide has its own poster and words, and the look is shared across the deck. Exports as a zip.
-- **Night Shift:** a themed carousel for lists. It's a departure board whose clock runs from dusk to dawn, with rubber-stamp running jokes that escalate as they repeat.
+- **Carousel:** a cover followed by up to 20 postcards. Each postcard has its own poster and words, and the look is shared across the deck. The cover is either a film still or a "colour essence": a swirl made from the colours of every poster in the deck. Exports as a zip.
 
 ## Features
 
