@@ -13,7 +13,7 @@ const DEFAULTS = {
   focusX: 0.5, focusY: 0.5, zoom: 1,
   swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
   source: "all", sourceId: null, // essence colours: every poster, or one film
-  motion: false, intensity: 0.6, loop: "8", // essence only: a seamless loop, exported as MP4
+  motion: false, intensity: 0.5, loop: "8", // essence only: a seamless loop, exported as MP4
 };
 let hero = { ...DEFAULTS };
 try { Object.assign(hero, JSON.parse(localStorage.getItem(STORE) || "{}")); } catch (e) { /* storage unavailable */ }
