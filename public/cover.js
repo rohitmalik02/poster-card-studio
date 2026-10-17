@@ -13,7 +13,7 @@ const DEFAULTS = {
   focusX: 0.5, focusY: 0.5, zoom: 1,
   swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
   source: "all", sourceId: null, // essence colours: every poster, or one film
-  motion: false, intensity: 0.5, loop: "8", // essence only: a seamless loop, exported as MP4
+  motion: false, intensity: 0.4, loop: "12", // essence only: a seamless loop, exported as MP4
 };
 let hero = { ...DEFAULTS };
 try { Object.assign(hero, JSON.parse(localStorage.getItem(STORE) || "{}")); } catch (e) { /* storage unavailable */ }
@@ -304,6 +304,7 @@ function drawWords(ctx, W, H, K) {
 /* ---------------- render ---------------- */
 function render(canvas, outW, t = null) {
   if (canvas.id === "preview" && animating()) { if (t === null) t = liveT(); kick(); }
+  if (t !== null) t = breathe(t);
   const R = P.RATIOS[P.state.ratio] || P.RATIOS["3:4"], W = R.w, H = R.h, K = outW / W;
   P.setK(K);
   canvas.width = Math.round(W * K); canvas.height = Math.round(H * K);
@@ -314,6 +315,20 @@ function render(canvas, outW, t = null) {
 }
 
 /* ---------------- motion ---------------- */
+// Loop time with a held breath: the motion eases to a standstill around the loop point and drifts on at an even
+// pace elsewhere. It also hides H.264's warm-up (encoders stall for a few frames after the opening keyframe,
+// which shows as a jerk on anything moving), and keeps the loop seam soft. Speed is 1 - g(t), g a narrow
+// cos^16 bump at t = 0, normalised so the loop still ends at 1.
+const BREATH = (() => {
+  const N = 1024, cum = new Float64Array(N + 1);
+  for (let i = 0; i < N; i++) cum[i + 1] = cum[i] + (1 - ((1 + Math.cos(TAU * (i + 0.5) / N)) / 2) ** 16) / N;
+  for (let i = 0; i <= N; i++) cum[i] /= cum[N];
+  return cum;
+})();
+function breathe(t) {
+  const x = (((t % 1) + 1) % 1) * (BREATH.length - 1), i = Math.floor(x), f = x - i;
+  return BREATH[i] + (BREATH[Math.min(i + 1, BREATH.length - 1)] - BREATH[i]) * f;
+}
 const FPS = 30, VIDEO_W = 1080; // Instagram plays video at 1080 wide at most
 const loopSec = () => +hero.loop || 8;
 const moving = () => !!hero.enabled && hero.design === "essence" && !!hero.motion;
@@ -324,69 +339,44 @@ const liveT = () => (performance.now() / 1000 / loopSec()) % 1;
 function tick() { rafId = 0; if (!animating()) return; P.redraw(); }
 function kick() { if (!rafId && animating()) rafId = requestAnimationFrame(tick); }
 
-let muxerP = null;
-function loadMuxer() {
-  return (muxerP ||= new Promise((res, rej) => {
-    const s = document.createElement("script"); s.src = "vendor/mp4-muxer.js";
-    s.onload = () => res(window.Mp4Muxer); s.onerror = () => { muxerP = null; s.remove(); rej(new Error("Couldn't load the video packager.")); };
-    document.head.append(s);
-  }));
+// Video: our own H.264 encoder (minih264 compiled to WebAssembly) at a constant quantizer, so every browser makes
+// the same file. Browser encoders under bitrate control starve slow colour drift: they skip small changes, then
+// catch up in a jump, and the picture creeps away from what was drawn until the next keyframe snaps it back.
+const QP = 20; // 10 best .. 51 smallest; 20 keeps the grain and glitter crisp at about 1-2 MB a second
+let encoderP = null;
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => { s.remove(); rej(new Error("Couldn't load the video encoder.")); }; document.head.append(s); });
 }
-async function videoConfig(width, height) {
-  if (typeof VideoEncoder === "undefined") return null;
-  // Software encoding first: hardware encoders (notably on Windows) can leave out the decoder setup an MP4 needs.
-  // Baseline profile only: it has no B-frames, so chunks arrive in display order (Firefox reorders High/Main
-  // frames, and WebCodecs doesn't expose the offsets an MP4 would need to put them back).
-  for (const hardwareAcceleration of ["prefer-software", "no-preference"]) {
-    for (const codec of ["avc1.42e032", "avc1.420032", "avc1.42e028"]) {
-      const cfg = { codec, width, height, bitrate: 10e6, framerate: FPS, hardwareAcceleration, avc: { format: "avc" } };
-      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch (e) { /* try the next */ }
-    }
-  }
-  return null;
+function loadEncoder() {
+  return (encoderP ||= (async () => {
+    await Promise.all([loadScript("vendor/mp4-h264.js"), loadScript("vendor/mp4-h264.wasm.js")]);
+    const bin = Uint8Array.from(atob(window.MP4_H264_WASM), ch => ch.charCodeAt(0));
+    return window.Mp4H264({ wasmBinary: bin });
+  })().catch(e => { encoderP = null; throw e; }));
 }
-// One seamless loop as H.264 in an MP4. onProgress gets 0..1.
+// One seamless loop as an MP4. onProgress gets 0..1.
 async function renderVideo(onProgress = () => {}) {
+  if (typeof WebAssembly === "undefined") throw new Error("This browser can't run the video encoder.");
+  const M = await loadEncoder();
   const c = document.createElement("canvas"); render(c, VIDEO_W, 0);
-  const width = c.width & ~1, height = c.height & ~1;
-  const cfg = await videoConfig(width, height);
-  if (!cfg) throw new Error("This browser can't encode MP4 video. Try Chrome, Edge or Safari.");
-  const M = await loadMuxer();
-  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: "avc", width, height, frameRate: FPS }, fastStart: "in-memory", firstTimestampBehavior: "offset" });
-  let failed = null, described = false;
-  const SRGB = { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false };
-  const output = (chunk, meta) => {
-    try {
-      const dc = meta?.decoderConfig;
-      if (dc) { // fill in anything the encoder left blank, so the packager never meets a null
-        const cs = dc.colorSpace || {};
-        meta = { ...meta, decoderConfig: { ...dc, colorSpace: { primaries: cs.primaries || SRGB.primaries, transfer: cs.transfer || SRGB.transfer, matrix: cs.matrix || SRGB.matrix, fullRange: !!cs.fullRange } } };
-        if (dc.description) described = true;
-      }
-      muxer.addVideoChunk(chunk, meta);
-    } catch (e) { failed ||= e; }
-  };
-  const enc = new VideoEncoder({ output, error: e => { failed = e; } });
-  enc.configure(cfg);
-  const frames = Math.round(loopSec() * FPS);
+  const width = c.width & ~1, height = c.height & ~1, frames = Math.round(loopSec() * FPS);
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  // One keyframe: at a constant quantizer nothing drifts, so there's nothing to reset mid-loop.
+  const enc = M.create({ width, height, fps: FPS, quantizationParameter: QP, speed: 4, groupOfPictures: frames, stride: 4 });
   exporting = true;
   try {
     for (let i = 0; i < frames; i++) {
-      if (failed) throw failed;
       render(c, VIDEO_W, i / frames);
-      const frame = new VideoFrame(c, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS), visibleRect: { x: 0, y: 0, width, height } });
-      enc.encode(frame, { keyFrame: i % (FPS * 2) === 0 }); frame.close();
-      while (enc.encodeQueueSize > 4) await new Promise(r => setTimeout(r, 4));
+      enc.encodeRGB(ctx.getImageData(0, 0, width, height).data);
       onProgress((i + 1) / frames);
       await new Promise(r => setTimeout(r, 0)); // let the progress text paint
     }
-    await enc.flush();
-    if (failed) throw failed;
-    if (!described) throw new Error("The video encoder didn't describe its stream, so the MP4 can't be packaged.");
-    muxer.finalize();
-    return new Blob([muxer.target.buffer], { type: "video/mp4" });
+    return new Blob([enc.end()], { type: "video/mp4" });
+  } catch (e) {
+    try { enc.end(); } catch (_) { /* already finished */ }
+    throw e;
   } finally {
-    exporting = false; if (enc.state !== "closed") enc.close(); kick();
+    exporting = false; kick();
   }
 }
 

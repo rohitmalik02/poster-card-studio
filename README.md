@@ -18,7 +18,7 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 - Type styles: Criterion, Marquee, Arthouse and Zine (chrome lettering)
 - Export as PNG or JPG at 1080, 1440 or 2160 px wide
 - Everything runs in the browser. Images are never uploaded anywhere.
-- Motion (colour essence cover): the colours drift, swirl and breathe while the grain and glitter stay put. It exports a seamless 1080 px H.264 MP4 loop (5, 8 or 12 s), made in the browser with WebCodecs and packaged by the vendored [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) (MIT). This needs Chrome, Edge or Safari.
+- Motion (colour essence cover): the colours drift, swirl and breathe while the grain and glitter stay put, easing to a held breath at the loop point. It exports a seamless 1080 px H.264 MP4 loop (5, 8 or 12 s) using a vendored WebAssembly encoder, [mp4-h264](https://github.com/mattdesl/mp4-h264) (MIT; minih264 and minimp4, CC0), at a constant quality, so every browser makes the same file. The vendored glue is patched to avoid `new Function`, so the CSP only adds `'wasm-unsafe-eval'`.
 - Work autosaves in the browser (localStorage for words and settings, IndexedDB for images).
 - **Save project** downloads the whole carousel as one `.json` file: slides, posters, backdrops, cover and look. **Open project** (or dropping the file on the page) loads it back, replacing what's open. Use it for backups, for moving between devices, and for keeping one file per carousel.
 
