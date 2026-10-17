@@ -13,6 +13,7 @@ const DEFAULTS = {
   focusX: 0.5, focusY: 0.5, zoom: 1,
   swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
   source: "all", sourceId: null, // essence colours: every poster, or one film
+  motion: false, intensity: 0.6, loop: "8", // essence only: a seamless loop, exported as MP4
 };
 let hero = { ...DEFAULTS };
 try { Object.assign(hero, JSON.parse(localStorage.getItem(STORE) || "{}")); } catch (e) { /* storage unavailable */ }
@@ -20,7 +21,7 @@ let still = null, stillPal = null;
 let saveT = 0;
 const flush = () => { clearTimeout(saveT); try { localStorage.setItem(STORE, JSON.stringify(hero)); } catch (e) { /* ignore */ } };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
-const changed = () => { save(); P.schedule(); };
+const changed = () => { save(); P.schedule(); kick(); };
 
 /* ---------------- colour helpers ---------------- */
 const TAU = Math.PI * 2;
@@ -94,9 +95,12 @@ const fbm = (n, x, y) => n(x, y) * 0.55 + n(x * 2.1 + 5.2, y * 2.1 + 9.7) * 0.3 
 
 // Low-res colour field: a domain-warped log spiral. Each palette colour is an arm whose width follows how
 // much of the posters it covers; vivid accents glow additively as thin ribbons.
+// Motion (t in 0..1, null when still): a muted breath. The warp noise is sampled along a circle in noise space
+// (the colours melt), the spiral turns a few degrees and back, its radius swells and settles, and each arm drifts
+// and brightens on its own phase. Every term is periodic in t, so the last frame flows into the first.
 let fieldCache = null;
-function essenceField(pal, w, h) {
-  const key = [w, h, hero.seed, hero.swirl, hero.flow, ...pal.map(c => toHex(c.rgb) + c.w.toFixed(3))].join("|");
+function essenceField(pal, w, h, t = null) {
+  const key = [w, h, t, hero.seed, hero.swirl, hero.flow, hero.intensity, ...pal.map(c => toHex(c.rgb) + c.w.toFixed(3))].join("|");
   if (fieldCache && fieldCache.key === key) return fieldCache;
   const rnd = mulberry32(hero.seed * 7919 + 17), noise = makeNoise(rnd);
   const sorted = pal.slice().sort((a, b) => b.w - a.w);
@@ -104,18 +108,22 @@ function essenceField(pal, w, h) {
   const base0 = mixRgb(sorted[0].rgb, darkest, 0.5), base1 = mixRgb(sorted[Math.min(1, sorted.length - 1)].rgb, darkest, 0.35);
   const cx = 0.38 + rnd() * 0.24, cy = 0.34 + rnd() * 0.3, aspect = w / h;
   const tight = 1 + hero.swirl * 5.5, warp = 0.06 + hero.flow * 0.55;
+  const moving = t !== null, m = moving ? hero.intensity : 0, ph = moving ? t * TAU : 0, rho = m * 0.25;
+  const o1x = rho * (Math.cos(ph) - 1), o1y = rho * Math.sin(ph), o2x = rho * Math.sin(ph), o2y = rho * (Math.cos(ph) - 1);
+  const sway = m * 0.16 * Math.sin(ph), breath = 1 + m * 0.06 * Math.cos(ph);
   const arms = sorted.map((c, k) => {
     const s = satOf(c.rgb), L = lumOf(c.rgb), glow = c.accent || (s > 0.5 && L > 0.3);
     return { rgb: c.rgb, glow, phase: k * 2.39996 + rnd() * 0.9, width: (glow ? 0.12 : 0.3) + 1.15 * Math.sqrt(c.w),
       r0: rnd() * 0.12, r1: 0.45 + rnd() * 0.7, str: glow ? 0.75 : 0.5 + 0.5 * Math.min(1, c.w * 5) };
   });
+  if (moving) for (const a of arms) { a.phase += m * 0.12 * Math.sin(ph + a.phase * 2); a.str *= 1 + m * 0.12 * Math.sin(ph + a.phase); }
   const img = new ImageData(w, h), d = img.data;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let nx = (x / w - cx) * aspect, ny = y / h - cy;
-      const n1 = fbm(noise, nx * 1.7 + 11.3, ny * 1.7 + 3.7), n2 = fbm(noise, nx * 1.7 - 7.1, ny * 1.7 + 19.9);
+      const n1 = fbm(noise, nx * 1.7 + 11.3 + o1x, ny * 1.7 + 3.7 + o1y), n2 = fbm(noise, nx * 1.7 - 7.1 + o2x, ny * 1.7 + 19.9 + o2y);
       nx += (n1 - 0.5) * warp * 2; ny += (n2 - 0.5) * warp * 2;
-      const r = Math.hypot(nx, ny), sp = Math.atan2(ny, nx) + tight * Math.log(r + 0.06);
+      const r = Math.hypot(nx, ny) * breath, sp = Math.atan2(ny, nx) + tight * Math.log(r + 0.06) + sway;
       const tb = Math.max(0, Math.min(1, y / h * 0.75 + (n1 - 0.5) * 0.7 + 0.12));
       let R = base0[0] + (base1[0] - base0[0]) * tb, G = base0[1] + (base1[1] - base0[1]) * tb, B = base0[2] + (base1[2] - base0[2]) * tb;
       for (const a of arms) {
@@ -133,9 +141,10 @@ function essenceField(pal, w, h) {
   return fieldCache;
 }
 
-function drawEssence(ctx, W, H) {
+function drawEssence(ctx, W, H, t = null) {
   const pal = deckPalette(), dev = ctx.canvas, dw = dev.width, dh = dev.height;
-  const f = essenceField(pal, 200, Math.round(200 * H / W));
+  const f = essenceField(pal, 200, Math.round(200 * H / W), t);
+  const moving = t !== null, m = moving ? hero.intensity : 0, ph = moving ? t * TAU : 0;
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
   // soft, glassy: upscale the field through a blur, overscanned so the edges don't fade
   const blur = (4 + hero.glass * 34) * dw / 1080, os = blur * 2.5;
@@ -143,12 +152,12 @@ function drawEssence(ctx, W, H) {
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
   if (P.FILTER_OK) ctx.filter = `blur(${blur}px) saturate(1.12)`;
   ctx.drawImage(f.canvas, -os, -os, dw + os * 2, dh + os * 2); ctx.filter = "none";
-  // glass: two faint diagonal reflections
-  const g = ctx.createLinearGradient(0, 0, dw, dh);
-  g.addColorStop(0.3, "rgba(255,255,255,0)"); g.addColorStop(0.4, `rgba(255,255,255,${0.04 + 0.06 * hero.glass})`);
-  g.addColorStop(0.47, "rgba(255,255,255,0)"); g.addColorStop(0.6, `rgba(255,255,255,${0.02 + 0.04 * hero.glass})`); g.addColorStop(0.66, "rgba(255,255,255,0)");
+  // glass: two faint diagonal reflections (they sweep back and forth when moving)
+  const g = ctx.createLinearGradient(0, 0, dw, dh), sw = m * 0.04 * Math.sin(ph);
+  g.addColorStop(0.3 + sw, "rgba(255,255,255,0)"); g.addColorStop(0.4 + sw, `rgba(255,255,255,${0.04 + 0.06 * hero.glass})`);
+  g.addColorStop(0.47 + sw, "rgba(255,255,255,0)"); g.addColorStop(0.6 + sw, `rgba(255,255,255,${0.02 + 0.04 * hero.glass})`); g.addColorStop(0.66 + sw, "rgba(255,255,255,0)");
   ctx.fillStyle = g; ctx.fillRect(0, 0, dw, dh);
-  // sand: overlay grain at two scales
+  // sand: overlay grain at two scales; it stays put while the colours move beneath it, like sand on glass
   const grain = P.getGrain();
   ctx.globalCompositeOperation = "overlay"; ctx.globalAlpha = 0.12 + hero.glitter * 0.14;
   ctx.fillStyle = ctx.createPattern(grain, "repeat"); ctx.fillRect(0, 0, dw, dh);
@@ -156,16 +165,22 @@ function drawEssence(ctx, W, H) {
   const fine = ctx.createPattern(grain, "repeat"); fine.setTransform(new DOMMatrix().scale(0.5)); ctx.fillStyle = fine; ctx.fillRect(0, 0, dw, dh);
   // glitter: specks tinted by the colour underneath, a few with a star glint
   ctx.globalCompositeOperation = "lighter"; ctx.globalAlpha = 1;
+  // Twinkle comes from its own generator so the specks sit in the same places whether or not the cover moves.
   const rnd = mulberry32(hero.seed * 104729 + 3), n = Math.round(hero.glitter * 3200 * (dw * dh) / (1440 * 1920)), unit = dw / 1440;
+  const tw = mulberry32(hero.seed * 31 + 99);
   for (let i = 0; i < n; i++) {
-    const x = rnd() * dw, y = rnd() * dh;
+    const x = rnd() * dw, y = rnd() * dh; let k = 1;
+    if (moving) {
+      const freq = 1 + Math.floor(tw() * 3), p = tw() * TAU, wave = 0.5 + 0.5 * Math.sin(freq * ph + p);
+      k = 1 - m * 0.6 * (1 - wave * wave); // specks stay fixed, a few dim and catch the light again
+    }
     const fi = (Math.min(f.h - 1, Math.floor(y / dh * f.h)) * f.w + Math.min(f.w - 1, Math.floor(x / dw * f.w))) * 4;
     const c = mixRgb([f.data[fi], f.data[fi + 1], f.data[fi + 2]], [255, 250, 240], 0.55);
-    const r = (0.45 + rnd() ** 3 * 2.2) * unit, a = 0.18 + rnd() * 0.55;
+    const r = (0.45 + rnd() ** 3 * 2.2) * unit, a = (0.18 + rnd() * 0.55) * k;
     ctx.fillStyle = `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
     if (rnd() < 0.025) {
-      const L = r * (5 + rnd() * 6);
+      const L = r * (5 + rnd() * 6) * (moving ? 0.4 + k : 1);
       for (const [ax, ay] of [[1, 0], [0, 1]]) {
         const lg = ctx.createLinearGradient(x - ax * L, y - ay * L, x + ax * L, y + ay * L);
         lg.addColorStop(0, "rgba(255,255,255,0)"); lg.addColorStop(0.5, `rgba(255,255,255,${a})`); lg.addColorStop(1, "rgba(255,255,255,0)");
@@ -287,20 +302,96 @@ function drawWords(ctx, W, H, K) {
 }
 
 /* ---------------- render ---------------- */
-function render(canvas, outW) {
+function render(canvas, outW, t = null) {
+  if (canvas.id === "preview" && animating()) { if (t === null) t = liveT(); kick(); }
   const R = P.RATIOS[P.state.ratio] || P.RATIOS["3:4"], W = R.w, H = R.h, K = outW / W;
   P.setK(K);
   canvas.width = Math.round(W * K); canvas.height = Math.round(H * K);
   const ctx = canvas.getContext("2d"); ctx.setTransform(K, 0, 0, K, 0, 0);
   if (hero.design === "still") { drawStill(ctx, W, H); drawShade(ctx, W, H, hero.shade); }
-  else { drawEssence(ctx, W, H); drawShade(ctx, W, H, hero.shade * 0.7); }
+  else { drawEssence(ctx, W, H, t); drawShade(ctx, W, H, hero.shade * 0.7); }
   drawWords(ctx, W, H, K);
+}
+
+/* ---------------- motion ---------------- */
+const FPS = 30, VIDEO_W = 1080; // Instagram plays video at 1080 wide at most
+const loopSec = () => +hero.loop || 8;
+const moving = () => !!hero.enabled && hero.design === "essence" && !!hero.motion;
+let rafId = 0, exporting = false;
+const animating = () => moving() && P.isCover() && !exporting;
+const liveT = () => (performance.now() / 1000 / loopSec()) % 1;
+// The preview redraws as fast as the field allows; the export renders every frame exactly, however long it takes.
+function tick() { rafId = 0; if (!animating()) return; P.redraw(); }
+function kick() { if (!rafId && animating()) rafId = requestAnimationFrame(tick); }
+
+let muxerP = null;
+function loadMuxer() {
+  return (muxerP ||= new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = "vendor/mp4-muxer.js";
+    s.onload = () => res(window.Mp4Muxer); s.onerror = () => { muxerP = null; s.remove(); rej(new Error("Couldn't load the video packager.")); };
+    document.head.append(s);
+  }));
+}
+async function videoConfig(width, height) {
+  if (typeof VideoEncoder === "undefined") return null;
+  // Software encoding first: hardware encoders (notably on Windows) can leave out the decoder setup an MP4 needs.
+  for (const hardwareAcceleration of ["prefer-software", "no-preference"]) {
+    for (const codec of ["avc1.640032", "avc1.4d0032", "avc1.42e032", "avc1.640028"]) {
+      const cfg = { codec, width, height, bitrate: 10e6, framerate: FPS, hardwareAcceleration, avc: { format: "avc" } };
+      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch (e) { /* try the next */ }
+    }
+  }
+  return null;
+}
+// One seamless loop as H.264 in an MP4. onProgress gets 0..1.
+async function renderVideo(onProgress = () => {}) {
+  const c = document.createElement("canvas"); render(c, VIDEO_W, 0);
+  const width = c.width & ~1, height = c.height & ~1;
+  const cfg = await videoConfig(width, height);
+  if (!cfg) throw new Error("This browser can't encode MP4 video. Try Chrome, Edge or Safari.");
+  const M = await loadMuxer();
+  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: "avc", width, height, frameRate: FPS }, fastStart: "in-memory" });
+  let failed = null, described = false;
+  const SRGB = { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false };
+  const output = (chunk, meta) => {
+    try {
+      const dc = meta?.decoderConfig;
+      if (dc) { // fill in anything the encoder left blank, so the packager never meets a null
+        const cs = dc.colorSpace || {};
+        meta = { ...meta, decoderConfig: { ...dc, colorSpace: { primaries: cs.primaries || SRGB.primaries, transfer: cs.transfer || SRGB.transfer, matrix: cs.matrix || SRGB.matrix, fullRange: !!cs.fullRange } } };
+        if (dc.description) described = true;
+      }
+      muxer.addVideoChunk(chunk, meta);
+    } catch (e) { failed ||= e; }
+  };
+  const enc = new VideoEncoder({ output, error: e => { failed = e; } });
+  enc.configure(cfg);
+  const frames = Math.round(loopSec() * FPS);
+  exporting = true;
+  try {
+    for (let i = 0; i < frames; i++) {
+      if (failed) throw failed;
+      render(c, VIDEO_W, i / frames);
+      const frame = new VideoFrame(c, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS), visibleRect: { x: 0, y: 0, width, height } });
+      enc.encode(frame, { keyFrame: i % (FPS * 2) === 0 }); frame.close();
+      while (enc.encodeQueueSize > 4) await new Promise(r => setTimeout(r, 4));
+      onProgress((i + 1) / frames);
+      await new Promise(r => setTimeout(r, 0)); // let the progress text paint
+    }
+    await enc.flush();
+    if (failed) throw failed;
+    if (!described) throw new Error("The video encoder didn't describe its stream, so the MP4 can't be packaged.");
+    muxer.finalize();
+    return new Blob([muxer.target.buffer], { type: "video/mp4" });
+  } finally {
+    exporting = false; if (enc.state !== "closed") enc.close(); kick();
+  }
 }
 
 /* ---------------- panel ---------------- */
 const $ = id => document.getElementById(id);
 const pct = v => Math.round(v * 100) + "%";
-const FMT = { swirl: pct, flow: pct, glass: pct, glitter: pct, shade: pct, focusX: pct, focusY: pct, zoom: v => (+v).toFixed(2) + "×" };
+const FMT = { swirl: pct, flow: pct, glass: pct, glitter: pct, intensity: pct, shade: pct, focusX: pct, focusY: pct, zoom: v => (+v).toFixed(2) + "×" };
 function seg(id, key, after) {
   $(id).querySelectorAll("button").forEach(b => {
     b.setAttribute("aria-pressed", String(hero[key] === b.dataset.v));
@@ -328,6 +419,7 @@ function sync() {
   document.querySelectorAll("output[data-cvo]").forEach(o => (o.textContent = FMT[o.dataset.cvo](hero[o.dataset.cvo])));
   seg("cvDesign", "design", () => { hero.color = null; }); seg("cvAlign", "align"); seg("cvPos", "vpos");
   $("cvEssenceCtl").hidden = hero.design !== "essence"; $("cvStillCtl").hidden = hero.design !== "still";
+  $("cvMotionCtl").hidden = !hero.motion; seg("cvLoop", "loop");
   seg("cvSource", "source", () => { if (!hero.sourceId) hero.sourceId = sourceSlide()?.id || null; });
   refresh();
 }
@@ -353,6 +445,7 @@ document.querySelectorAll("[data-cv]").forEach(el => el.addEventListener("input"
   const k = el.dataset.cv; hero[k] = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
   const o = document.querySelector(`output[data-cvo="${k}"]`); if (o) o.textContent = FMT[k](hero[k]);
   if (k === "focusX" || k === "focusY" || k === "zoom") hero.design = "still";
+  if (k === "motion") { sync(); P.renderDeck(); }
   changed();
 }));
 $("cvShuffle").addEventListener("click", () => { hero.seed = (hero.seed * 48271 + 11) % 2147483647; changed(); });
@@ -374,6 +467,7 @@ $("cvStillFile").addEventListener("change", e => { const f = e.target.files[0]; 
 
 window.Cover = {
   render, sync, takeFile, refresh, flush, hold: () => clearTimeout(saveT),
+  moving, video: renderVideo, loopSec,
   enabled: () => !!hero.enabled,
   setEnabled: v => { hero.enabled = !!v; changed(); },
   title: () => hero.title || "cover",

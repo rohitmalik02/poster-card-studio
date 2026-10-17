@@ -65,6 +65,18 @@
             <div class="field"><label for="cvGlass">Glassy blur <output data-cvo="glass"></output></label><input type="range" id="cvGlass" data-cv="glass" min="0" max="1" step="0.01"></div>
             <div class="field"><label for="cvGlitter">Glitter sand <output data-cvo="glitter"></output></label><input type="range" id="cvGlitter" data-cv="glitter" min="0" max="1" step="0.01"></div>
             <button class="btn" id="cvShuffle" type="button">Reshuffle the swirl</button>
+            <div class="toggles"><label><input type="checkbox" id="cvMotion" data-cv="motion"> Motion: the swirl flows and the glitter twinkles (exports as a looping MP4)</label></div>
+            <div class="sec-inner" id="cvMotionCtl">
+              <div class="field"><label for="cvIntensity">Intensity <output data-cvo="intensity"></output></label><input type="range" id="cvIntensity" data-cv="intensity" min="0" max="1" step="0.01"></div>
+              <div class="field">
+                <span class="lbl">Loop length</span>
+                <div class="seg" id="cvLoop">
+                  <button type="button" data-v="5">5 s</button>
+                  <button type="button" data-v="8">8 s</button>
+                  <button type="button" data-v="12">12 s<small>slowest drift</small></button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="sec-inner" id="cvStillCtl">
             <label class="btn primary" for="cvStillFile">Upload film still</label>

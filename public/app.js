@@ -247,7 +247,7 @@ function renderDeck() {
   if (window.Cover?.enabled()) {
     const slot = document.createElement("div"); slot.className = "slot cover-slot";
     const b = document.createElement("button"); b.type = "button"; b.className = "thumb"; b.setAttribute("aria-current", String(onCover)); b.setAttribute("aria-label", "Cover");
-    const c = document.createElement("canvas"); c.style.width = "72px"; c.dataset.i = "cover"; const tag = document.createElement("span"); tag.textContent = "Cover";
+    const c = document.createElement("canvas"); c.style.width = "72px"; c.dataset.i = "cover"; const tag = document.createElement("span"); tag.textContent = window.Cover.moving() ? "Cover ▶" : "Cover";
     b.append(c, tag); b.addEventListener("click", selectCover);
     const tools = document.createElement("div"); tools.className = "tools";
     tools.append(mk("✕", "Remove the cover", () => { window.Cover.setEnabled(false); if (onCover) selectSlide(cur); else renderDeck(); toast("Cover removed. Add it back from the strip."); }));
@@ -789,7 +789,8 @@ function renderPreview() {
   const ew = +state.export.width, eh = Math.round(ew * R.h / R.w);
   if (coverOn()) {
     window.Cover.render(preview, cw * dpr);
-    document.getElementById("specs").innerHTML = `<b>${state.ratio}</b> ${R.name} · Cover · ${window.Cover.designName()} · exports <b>${ew} × ${eh}</b>`;
+    const out = window.Cover.moving() ? `<b>1080 × ${Math.round(1080 * R.h / R.w)}</b> MP4, ${window.Cover.loopSec()} s loop` : `<b>${ew} × ${eh}</b>`;
+    document.getElementById("specs").innerHTML = `<b>${state.ratio}</b> ${R.name} · Cover · ${window.Cover.designName()} · exports ${out}`;
     return;
   }
   const used = render(preview, cw * dpr);
@@ -976,8 +977,22 @@ const slug = s => (s || "post").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]
 let toastTimer;
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.textContent = ""), 4000); }
 
-document.getElementById("download").addEventListener("click", () => {
+function saveBlob(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+const mb = n => (n / 1048576).toFixed(1) + " MB";
+document.getElementById("download").addEventListener("click", async () => {
   const c = document.createElement("canvas"), cov = coverOn();
+  if (cov && window.Cover.moving()) {
+    const btn = document.getElementById("download"); btn.disabled = true;
+    try {
+      const blob = await window.Cover.video(f => { btn.textContent = `Rendering video ${Math.round(f * 100)}%`; });
+      saveBlob(blob, `${slug(window.Cover.title() + "-cover")}-${state.ratio.replace(":", "x")}.mp4`);
+      toast(`Saved a ${window.Cover.loopSec()} s looping MP4 (${mb(blob.size)}).`);
+    } catch (e) { console.error(e); toast(`Video export failed: ${e?.message || e}`); }
+    btn.disabled = false; btn.textContent = "Download post"; return;
+  }
   if (cov) window.Cover.render(c, +state.export.width); else render(c, +state.export.width);
   const fmt = state.export.format === "jpeg" ? "image/jpeg" : "image/png";
   c.toBlob(blob => {
@@ -999,7 +1014,10 @@ document.getElementById("downloadAll").addEventListener("click", async () => {
     files.push({ name: `${String(files.length + 1).padStart(2, "0")}-${name}.${ext}`, data: new Uint8Array(await blob.arrayBuffer()) });
   };
   try {
-    if (withCover) { btn.textContent = `Rendering 1/${total}…`; const c = document.createElement("canvas"); window.Cover.render(c, +state.export.width); await add(c, "cover"); }
+    if (withCover && window.Cover.moving()) {
+      const blob = await window.Cover.video(f => { btn.textContent = `Rendering cover video ${Math.round(f * 100)}%`; });
+      files.push({ name: "01-cover.mp4", data: new Uint8Array(await blob.arrayBuffer()) });
+    } else if (withCover) { btn.textContent = `Rendering 1/${total}…`; const c = document.createElement("canvas"); window.Cover.render(c, +state.export.width); await add(c, "cover"); }
     for (let i = 0; i < deck.length; i++) {
       btn.textContent = `Rendering ${files.length + 1}/${total}…`;
       const c = document.createElement("canvas"); const title = withSlide(i, () => { render(c, +state.export.width); return state.title; });
@@ -1008,7 +1026,10 @@ document.getElementById("downloadAll").addEventListener("click", async () => {
     const a = document.createElement("a"); a.href = URL.createObjectURL(makeZip(files)); a.download = `carousel-${state.ratio.replace(":", "x")}.zip`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`Saved ${files.length} slides as a zip.`);
-  } catch (e) { toast("Export failed. Try JPG, or a smaller export width."); }
+  } catch (e) {
+    console.error(e);
+    toast(withCover && window.Cover.moving() && !files.length ? `Cover video failed: ${e?.message || e}` : "Export failed. Try JPG, or a smaller export width.");
+  }
   btn.disabled = false; btn.textContent = "Download all (.zip)";
 });
 
@@ -1145,6 +1166,6 @@ window.PCS = {
   RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
   get state() { return state; }, preset: P, deckPosters, deckSlides, deckCount: () => deck.length,
   drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
-  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(),
+  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(),
 };
 })();
