@@ -55,7 +55,7 @@ const SAMPLES = {
     blurb: "A misdelivered tiffin in Mumbai starts a correspondence between a lonely widower and a neglected wife. Irrfan says more with a pause than most actors say with a monologue. *Gentle, aching, and full of food you can almost smell.*",
   },
   "piku": {
-    title: "Piku", year: "2015", director: "Shoojit Sircar", cast: "Deepika Padukone, Amitabh Bachchan, Irrfan Khan", runtime: "2h 3m", genre: "Comedy · Drama", rating: 4.5,
+    title: "Piku", year: "2015", director: "Shoojit Sircar", cast: "Deepika Padukone, Amitabh Bachchan, Irrfan Khan", runtime: "2h 3m", genre: "Comedy/Drama", rating: 4.5,
     kicker: "Weekend watch",
     blurb: "A road trip from Delhi to Kolkata, a father obsessed with his digestion, and a daughter at the end of her patience. Sircar finds *real tenderness in the bickering,* and Deepika, Amitabh and Irrfan make family exhaustion look a lot like love.",
   },
