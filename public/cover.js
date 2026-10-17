@@ -350,7 +350,7 @@ async function renderVideo(onProgress = () => {}) {
   const cfg = await videoConfig(width, height);
   if (!cfg) throw new Error("This browser can't encode MP4 video. Try Chrome, Edge or Safari.");
   const M = await loadMuxer();
-  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: "avc", width, height, frameRate: FPS }, fastStart: "in-memory" });
+  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: "avc", width, height, frameRate: FPS }, fastStart: "in-memory", firstTimestampBehavior: "offset" });
   let failed = null, described = false;
   const SRGB = { primaries: "bt709", transfer: "bt709", matrix: "bt709", fullRange: false };
   const output = (chunk, meta) => {
