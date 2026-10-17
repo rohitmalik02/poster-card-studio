@@ -9,7 +9,7 @@ const STORE = "poster-card-studio:cover:v1", STILL_KEY = "cover:still";
 const DEFAULTS = {
   enabled: true, design: "essence",
   kicker: "PMR#1", title: "Dangers of the Night", line: "Films that only make sense after dark.", count: true,
-  align: "left", vpos: "bottom", color: null, shade: 0.5,
+  align: "left", vpos: "bottom", color: null, shade: 0.5, handlePos: "auto",
   focusX: 0.5, focusY: 0.5, zoom: 1,
   swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
   source: "all", sourceId: null, // essence colours: every poster, or one film
@@ -270,13 +270,20 @@ function drawWords(ctx, W, H, K) {
   }
   const n = P.deckCount();
   if (hero.count && n) { h += 34; items.push({ k: "label", text: `${n} FILM${n === 1 ? "" : "S"} INSIDE   →`, size: 21, color: "rgba(255,255,255,0.78)", track: p.label.track * 0.7, y: h, tinted: true }); h += 21; }
-  const top = hero.vpos === "bottom" ? H - pad - h : hero.vpos === "middle" ? (H - h) / 2 : pad + 40;
+  // handle: with the words, opposite them (auto), or in a corner / edge centre
+  const handle = (st.show?.handle && (st.handle || "").trim()) || "";
+  const hp = hero.handlePos || "auto";
+  if (handle && hp === "with") { h += 30; items.push({ k: "label", text: handle, size: 19, track: p.label.track * 0.4, y: h, tinted: true, alpha: 0.7 }); h += 19; }
+  const edge = !handle || hp === "with" ? null : hp === "auto" ? (hero.vpos === "top" ? "b" : "t") : hp[0];
+  // a handle on the same edge as the words pushes them inward so the two never overlap
+  const clash = edge && ((edge === "b" && hero.vpos === "bottom") || (edge === "t" && hero.vpos === "top")) ? 19 + 34 : 0;
+  const top = hero.vpos === "bottom" ? H - pad - h - clash : hero.vpos === "middle" ? (H - h) / 2 : pad + 40 + clash;
   ctx.textBaseline = "alphabetic";
   for (const it of items) {
     const y = top + it.y;
     if (it.k === "label") {
       ctx.font = P.fontStr(p.label, it.size); ctx.fillStyle = it.tinted ? color : it.color;
-      ctx.globalAlpha = it.tinted ? 0.8 : 1;
+      ctx.globalAlpha = it.alpha ?? (it.tinted ? 0.8 : 1);
       P.drawTracked(ctx, it.text, x, y + it.size / 2 + P.capHeight(ctx) / 2, it.track, it.size, align); ctx.globalAlpha = 1;
     } else if (it.k === "title") {
       ctx.save(); ctx.font = P.fontStr(p.title, it.size); P.setTitleTracking(ctx, p.title, it.size); ctx.textAlign = align;
@@ -292,12 +299,11 @@ function drawWords(ctx, W, H, K) {
       it.lines.forEach((ln, i) => ctx.fillText(ln, x, y + i * it.lh + it.size * 0.8)); ctx.globalAlpha = 1;
     }
   }
-  // handle on the opposite edge, same side
-  const handle = (st.show?.handle && (st.handle || "").trim()) || "";
-  if (handle) {
+  if (edge) {
     ctx.font = P.fontStr(p.label, 19); ctx.fillStyle = color; ctx.globalAlpha = 0.7;
-    const y = hero.vpos === "top" ? H - pad : pad + 19; // opposite edge; with middle text it sits at the top
-    P.drawTracked(ctx, handle, x, y, p.label.track * 0.4, 19, align); ctx.globalAlpha = 1;
+    const ha = hp === "auto" ? align : hp[1] === "l" ? "left" : hp[1] === "r" ? "right" : "center";
+    const hx = ha === "left" ? pad : ha === "right" ? W - pad : W / 2;
+    P.drawTracked(ctx, handle, hx, edge === "b" ? H - pad : pad + 19, p.label.track * 0.4, 19, ha); ctx.globalAlpha = 1;
   }
 }
 
@@ -409,7 +415,7 @@ function sync() {
     if (el.type === "checkbox") el.checked = !!v; else if (document.activeElement !== el) el.value = v ?? "";
   });
   document.querySelectorAll("output[data-cvo]").forEach(o => (o.textContent = FMT[o.dataset.cvo](hero[o.dataset.cvo])));
-  seg("cvDesign", "design", () => { hero.color = null; }); seg("cvAlign", "align"); seg("cvPos", "vpos");
+  seg("cvDesign", "design", () => { hero.color = null; }); seg("cvAlign", "align"); seg("cvPos", "vpos"); seg("cvHandlePos", "handlePos");
   $("cvEssenceCtl").hidden = hero.design !== "essence"; $("cvStillCtl").hidden = hero.design !== "still";
   $("cvMotionCtl").hidden = !hero.motion; seg("cvLoop", "loop");
   seg("cvSource", "source", () => { if (!hero.sourceId) hero.sourceId = sourceSlide()?.id || null; });

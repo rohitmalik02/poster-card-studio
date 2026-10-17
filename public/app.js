@@ -79,7 +79,7 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let state = Object.assign(clone(LOOK_DEFAULTS), {
   sample: "before-sunrise",
   ...SAMPLES["before-sunrise"],
-  handle: "@yourhandle",
+  handle: "@yourhandle", handlePos: "with",
   show: { kicker: true, meta: true, stars: true, blurb: true, handle: true },
   accent: "#e9b65a", palette: [],
 });
@@ -456,7 +456,7 @@ function buildTop(ctx, width, { maxLines = 2, cap = 120, rule = false } = {}) {
 function buildBottom(ctx, width, maxH) {
   const p = P(); const items = []; let h = 0;
   const hasStars = state.show.stars && +state.rating > 0;
-  const handle = state.show.handle && (state.handle || "").trim();
+  const handle = state.show.handle && state.handlePos === "with" && (state.handle || "").trim();
   if (hasStars) { items.push({ kind: "stars", size: 34, y: h }); h += 34; }
   const reserveHandle = handle ? 30 + 18 : 0;
   const blurb = state.show.blurb && (state.blurb || "").trim();
@@ -769,7 +769,19 @@ function render(canvas, outW) {
   const plan = planLayout(ctx, W, H);
   drawShades(ctx, W, H, plan.shade);
   plan.draw();
+  drawCornerHandle(ctx, W, H);
   return plan.layout;
+}
+// Handle in a corner or edge centre, in the margin outside the text (which keeps a 6.5% inset).
+const HANDLE_POS = { with: "With text", tl: "Top left", tc: "Top centre", tr: "Top right", bl: "Bottom left", bc: "Bottom centre", br: "Bottom right" };
+function drawCornerHandle(ctx, W, H) {
+  const pos = state.handlePos, text = state.show.handle && (state.handle || "").trim();
+  if (!text || !HANDLE_POS[pos] || pos === "with") return;
+  const m = Math.round(Math.min(W, H) * 0.035), size = 18;
+  const align = pos[1] === "l" ? "left" : pos[1] === "r" ? "right" : "center";
+  ctx.font = fontStr(P().label, size); ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.textBaseline = "alphabetic";
+  const y = pos[0] === "t" ? m + capHeight(ctx) : H - m;
+  drawTracked(ctx, text, align === "left" ? m : align === "right" ? W - m : W / 2, y, P().label.track * 0.4, size, align);
 }
 
 /* ---------------- preview ---------------- */
@@ -845,6 +857,8 @@ document.querySelectorAll("[data-k]").forEach(el => {
     const k = el.dataset.k;
     let v = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
     setPath(state, k, v);
+    // the cover panel and the slide panel share some fields (the handle); keep the twin in step
+    document.querySelectorAll(`[data-k="${k}"]`).forEach(o => { if (o !== el) { if (o.type === "checkbox") o.checked = !!v; else o.value = v; } });
     if (el.type === "range") { const o = document.querySelector(`output[data-for="${k}"]`); if (o) o.textContent = FMT[k](v); }
     if (k === "rating") document.getElementById("ratingOut").textContent = starText(v);
     if (k === "blurb") updateWordCount();
@@ -878,6 +892,7 @@ function seg(containerId, entries, key, label) {
   }
 }
 function renderSegs() {
+  seg("handlePosSeg", Object.entries(HANDLE_POS), "handlePos", (id, name) => name);
   seg("ratioSeg", Object.entries(RATIOS), "ratio", (id, m) => `${id}<small>${m.name}</small>`);
   seg("layoutSeg", Object.entries(LAYOUTS), "layout", (id, m) => `${m.name}<small>${isWide() ? m.wide : m.tall}</small>`);
   const g = document.getElementById("presetGrid"); g.innerHTML = "";
