@@ -45,22 +45,22 @@ const PRESETS = {
 };
 const SAMPLES = {
   "before-sunrise": {
-    title: "Before Sunrise", year: "1995", director: "Richard Linklater", runtime: "1h 41m", genre: "Romance", rating: 4.5,
+    title: "Before Sunrise", year: "1995", director: "Richard Linklater", cast: "Ethan Hawke, Julie Delpy", runtime: "1h 41m", genre: "Romance", rating: 4.5,
     kicker: "Tonight's pick",
     blurb: "Two strangers step off a train in Vienna with one night and nothing to lose. Linklater turns a long walk and a longer conversation into *the most romantic film about time running out.* Watch it late, with someone you'd miss.",
   },
   "the-lunchbox": {
-    title: "The Lunchbox", year: "2013", director: "Ritesh Batra", runtime: "1h 44m", genre: "Drama", rating: 4,
+    title: "The Lunchbox", year: "2013", director: "Ritesh Batra", cast: "Irrfan Khan, Nimrat Kaur", runtime: "1h 44m", genre: "Drama", rating: 4,
     kicker: "Comfort watch",
     blurb: "A misdelivered tiffin in Mumbai starts a correspondence between a lonely widower and a neglected wife. Irrfan says more with a pause than most actors say with a monologue. *Gentle, aching, and full of food you can almost smell.*",
   },
   "piku": {
-    title: "Piku", year: "2015", director: "Shoojit Sircar", runtime: "2h 3m", genre: "Comedy · Drama", rating: 4.5,
+    title: "Piku", year: "2015", director: "Shoojit Sircar", cast: "Deepika Padukone, Amitabh Bachchan, Irrfan Khan", runtime: "2h 3m", genre: "Comedy · Drama", rating: 4.5,
     kicker: "Weekend watch",
     blurb: "A road trip from Delhi to Kolkata, a father obsessed with his digestion, and a daughter at the end of her patience. Sircar finds *real tenderness in the bickering,* and Deepika, Amitabh and Irrfan make family exhaustion look a lot like love.",
   },
   "a-summers-tale": {
-    title: "A Summer's Tale", year: "1996", director: "Éric Rohmer", runtime: "1h 53m", genre: "Romance", rating: 3.5,
+    title: "A Summer's Tale", year: "1996", director: "Éric Rohmer", cast: "Melvil Poupaud, Amanda Langlet", runtime: "1h 53m", genre: "Romance", rating: 3.5,
     kicker: "Hidden gem",
     blurb: "A shy musician waits in a Breton beach town for a girlfriend who may never show, and ends up juggling three women and his own indecision. Rohmer's summer is *all talk, sea air and gorgeous hesitation.* Pure holiday.",
   },
@@ -79,8 +79,8 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let state = Object.assign(clone(LOOK_DEFAULTS), {
   sample: "before-sunrise",
   ...SAMPLES["before-sunrise"],
-  handle: "@yourhandle", handlePos: "with",
-  show: { kicker: true, meta: true, stars: true, blurb: true, handle: true },
+  handle: "@yourhandle", handlePos: "with", directorIn: "billing",
+  show: { kicker: true, meta: true, stars: true, blurb: true, handle: true, cast: true },
   accent: "#e9b65a", palette: [],
 });
 let posterCanvas = null;   // 2:3 crop of the uploaded poster
@@ -177,7 +177,7 @@ async function setPoster(src, { persist = true, keepAccent = false } = {}) {
    Each slide keeps its own words, poster, backdrop still and accent; the look is shared.
    The current slide's words live in `state` (so every control keeps working); the rest wait in `deck`. */
 const DECK_KEY = "poster-card-studio:deck:v1";
-const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "runtime", "genre", "rating", "blurb", "accent", "palette"];
+const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "cast", "runtime", "genre", "rating", "blurb", "accent", "palette"];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pick = o => Object.fromEntries(CONTENT_KEYS.map(k => [k, clone(o[k] ?? null)]));
 let deck = [], cur = 0;
@@ -190,7 +190,7 @@ function stash() {
 }
 function loadSlide(i) {
   cur = i; const sl = deck[i];
-  for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]);
+  for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]); else if (k === "cast") state.cast = ""; // slides saved before the cast field
   if (!state.accent) state.accent = "#e9b65a";
   if (!Array.isArray(state.palette)) state.palette = [];
   const im = imgs.get(sl.id) || {};
@@ -221,7 +221,7 @@ function addSlide() {
   if (deck.length >= 20) { toast("Instagram carousels stop at 20 slides."); return; }
   stash();
   deck.splice(cur + 1, 0, { id: uid(), sample: null, kicker: state.kicker, title: "New film", year: "", director: "", runtime: "", genre: "",
-    rating: 0, blurb: "Why it's worth watching, in one or two lines.", accent: state.accent, palette: state.palette });
+    rating: 0, blurb: "Why it's worth watching, in one or two lines.", cast: "", accent: state.accent, palette: state.palette });
   selectSlide(cur + 1);
   toast("Slide added. Drop a poster on it.");
 }
@@ -431,7 +431,26 @@ function getGrain() {
 const P = () => PRESETS[state.preset] || PRESETS.criterion;
 
 function metaText() {
-  return [state.year, state.director, state.runtime, state.genre].map(s => (s || "").trim()).filter(Boolean).join("   ·   ");
+  const dir = state.directorIn === "top" ? state.director : "";
+  return [state.year, dir, state.runtime, state.genre].map(s => (s || "").trim()).filter(Boolean).join("   ·   ");
+}
+
+// Billing block: the small credit lines under a film poster. DIRECTED BY …, then STARRING A · B, dropping
+// names from the end (never shrinking the type) when the line runs wider than the column.
+const BILL_SIZE = 17, BILL_GAP = 12;
+function buildBilling(ctx, width) {
+  const p = P(), items = []; let h = 0;
+  const tr = p.label.track * 0.55, color = "rgba(255,255,255,0.68)";
+  ctx.font = fontStr(p.label, BILL_SIZE);
+  const fit = (prefix, names) => {
+    for (let n = names.length; n >= 1; n--) { const t = (prefix + names.slice(0, n).join("  ·  ")).toUpperCase(); if (trackedWidth(ctx, t, tr, BILL_SIZE) <= width || n === 1) return t; }
+    return "";
+  };
+  const dir = state.directorIn !== "top" && (state.director || "").trim();
+  const cast = state.show.cast ? (state.cast || "").split(/\s*(?:,|·|&|\band\b)\s*/i).map(s => s.trim()).filter(Boolean) : [];
+  if (dir) { items.push({ kind: "label", text: fit("Directed by ", [dir]), size: BILL_SIZE, color, track: tr, y: h }); h += BILL_SIZE; }
+  if (cast.length) { if (h) h += BILL_GAP; items.push({ kind: "label", text: fit("Starring ", cast), size: BILL_SIZE, color, track: tr, y: h }); h += BILL_SIZE; }
+  return { h, items };
 }
 
 function buildTop(ctx, width, { maxLines = 2, cap = 120, rule = false } = {}) {
@@ -453,8 +472,10 @@ function buildTop(ctx, width, { maxLines = 2, cap = 120, rule = false } = {}) {
   return { h, items };
 }
 
-function buildBottom(ctx, width, maxH) {
+function buildBottom(ctx, width, maxH, { billing = false } = {}) {
   const p = P(); const items = []; let h = 0;
+  const bill = billing ? buildBilling(ctx, width) : { h: 0, items: [] };
+  if (bill.h) maxH -= bill.h + 30;
   const hasStars = state.show.stars && +state.rating > 0;
   const handle = state.show.handle && state.handlePos === "with" && (state.handle || "").trim();
   if (hasStars) { items.push({ kind: "stars", size: 34, y: h }); h += 34; }
@@ -474,6 +495,7 @@ function buildBottom(ctx, width, maxH) {
     tooLong = fit.bh > avail;
     items.push({ kind: "blurb", ...fit, y: h }); h += fit.bh;
   }
+  if (bill.h) { if (h) h += 30; for (const it of bill.items) items.push({ ...it, y: h + it.y }); h += bill.h; }
   if (handle) { if (h) h += 30; items.push({ kind: "label", text: handle, size: 18, color: "rgba(255,255,255,0.5)", track: P().label.track * 0.4, y: h, upper: false }); h += 18; }
   return { h, items };
 }
@@ -689,7 +711,7 @@ function planLayout(ctx, W, H) {
       const py = y0 + top.h + gap, cx = pad + pw + gut, colW = W - pad - cx;
       drawPoster(ctx, pad, py, pw, ph);
       drawBlock(ctx, top, pad, y0, "left");
-      const bottom = buildBottom(ctx, colW, ph);
+      const bottom = buildBottom(ctx, colW, ph, { billing: true });
       drawBlock(ctx, bottom, cx, py + ph - bottom.h, "left");
     } };
   }
@@ -700,11 +722,13 @@ function planLayout(ctx, W, H) {
       const pad2 = Math.round(Math.min(W, H) * 0.065), gap = Math.round(H * 0.03), colW = Math.min(W - 2 * pad2, 940);
       const top = buildTop(ctx, colW, { maxLines: 2, cap: 100 });
       const bottom = buildBottom(ctx, Math.min(colW, 860), H * 0.24);
-      const avail = H - 2 * pad2 - top.h - bottom.h - 2 * gap;
+      const bill = buildBilling(ctx, colW), billH = bill.h ? bill.h + BILL_GAP * 2 : 0;
+      const avail = H - 2 * pad2 - top.h - bottom.h - 2 * gap - billH;
       const ph = Math.min(avail, (W - 2 * pad2) * 1.5) * scale, pw = ph * 2 / 3;
       const py = pad2 + (avail - ph) / 2;
       drawPoster(ctx, W / 2 - pw / 2, py, pw, ph);
-      drawBlock(ctx, top, W / 2, py + ph + gap, "center");
+      if (bill.h) { drawBlock(ctx, bill, W / 2, py + ph + BILL_GAP * 2, "center"); }
+      drawBlock(ctx, top, W / 2, py + ph + billH + gap, "center");
       drawBlock(ctx, bottom, W / 2, H - pad2 - bottom.h, "center");
     } };
   }
@@ -718,7 +742,7 @@ function planLayout(ctx, W, H) {
         drawPoster(ctx, px, py, pw, ph);
         const top = buildTop(ctx, leftW, { maxLines: 4, cap: 92, rule: true });
         drawBlock(ctx, top, px - gut, py + 4, "right");
-        const bottom = buildBottom(ctx, rightW, ph);
+        const bottom = buildBottom(ctx, rightW, ph, { billing: true });
         drawBlock(ctx, bottom, px + pw + gut, py + ph - bottom.h, "left");
       } };
     }
@@ -734,7 +758,7 @@ function planLayout(ctx, W, H) {
         drawPoster(ctx, x0, py, pw, ph);
         const top = buildTop(ctx, colW, { maxLines: 3, cap: 116, rule: true });
         drawBlock(ctx, top, cx, py + 4, "left");
-        const bottom = buildBottom(ctx, Math.min(colW, 700), ph - top.h - 70);
+        const bottom = buildBottom(ctx, Math.min(colW, 700), ph - top.h - 70, { billing: true });
         drawBlock(ctx, bottom, cx, py + ph - bottom.h, "left");
       } };
     }
@@ -747,11 +771,13 @@ function planLayout(ctx, W, H) {
     const gap = Math.round(H * 0.03), colW = Math.min(W - 2 * pad, 940);
     const top = buildTop(ctx, colW, { maxLines: 2, cap: H / W > 1.5 ? 124 : 108 });
     const posterMin = H * (H / W > 1.5 ? 0.5 : 0.47);
-    const bottom = buildBottom(ctx, Math.min(colW, 860), H - 2 * pad - top.h - 2 * gap - posterMin);
-    const avail = H - 2 * pad - top.h - bottom.h - 2 * gap;
+    const bill = buildBilling(ctx, colW), billH = bill.h ? bill.h + BILL_GAP * 2 : 0;
+    const bottom = buildBottom(ctx, Math.min(colW, 860), H - 2 * pad - top.h - 2 * gap - posterMin - billH);
+    const avail = H - 2 * pad - top.h - bottom.h - 2 * gap - billH;
     const ph = Math.min(avail, (W - 2 * pad) * 1.5) * scale, pw = ph * 2 / 3;
     const cy = pad + top.h + gap + avail / 2;
     drawPoster(ctx, W / 2 - pw / 2, cy - ph / 2, pw, ph);
+    if (bill.h) drawBlock(ctx, bill, W / 2, cy + ph / 2 + BILL_GAP * 2, "center");
     drawBlock(ctx, top, W / 2, pad, "center");
     drawBlock(ctx, bottom, W / 2, H - pad - bottom.h, "center");
   } };
@@ -892,6 +918,7 @@ function seg(containerId, entries, key, label) {
   }
 }
 function renderSegs() {
+  seg("directorInSeg", [["billing", "Under the poster"], ["top", "Top line"]], "directorIn", (id, name) => name);
   seg("handlePosSeg", Object.entries(HANDLE_POS), "handlePos", (id, name) => name);
   seg("ratioSeg", Object.entries(RATIOS), "ratio", (id, m) => `${id}<small>${m.name}</small>`);
   seg("layoutSeg", Object.entries(LAYOUTS), "layout", (id, m) => `${m.name}<small>${isWide() ? m.wide : m.tall}</small>`);
@@ -1055,6 +1082,7 @@ document.getElementById("copyCaption").addEventListener("click", () => {
     `${title}${state.year ? ` (${state.year})` : ""}${+state.rating > 0 ? "  " + starText(+state.rating) : ""}`,
     "", plain, "",
     [state.director && `Dir. ${state.director}`, state.runtime, state.genre].filter(Boolean).join(" · "),
+    (state.cast || "").trim() ? `Starring ${(state.cast || "").trim()}` : "",
     "", `#${tag || "film"} #filmrecommendations #moviestowatch #letterboxd #cinephile`,
   ];
   const text = lines.join("\n").replace(/\n{3,}/g, "\n\n");

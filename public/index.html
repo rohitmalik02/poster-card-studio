@@ -143,6 +143,7 @@
             <div class="field"><label for="runtime">Runtime</label><input type="text" id="runtime" data-k="runtime"></div>
             <div class="field"><label for="genre">Genre</label><input type="text" id="genre" data-k="genre"></div>
           </div>
+          <div class="field"><label for="cast">Starring <span>two names reads best</span></label><input type="text" id="cast" data-k="cast" placeholder="Ethan Hawke, Julie Delpy"></div>
           <div class="field">
             <label for="rating">Your rating <output id="ratingOut"></output></label>
             <input type="range" id="rating" data-k="rating" min="0" max="5" step="0.5">
@@ -156,10 +157,12 @@
           <div class="toggles">
             <label><input type="checkbox" id="showKicker" data-k="show.kicker"> Eyebrow</label>
             <label><input type="checkbox" id="showMeta" data-k="show.meta"> Year &amp; credits</label>
+            <label><input type="checkbox" id="showCast" data-k="show.cast"> Cast</label>
             <label><input type="checkbox" id="showStars" data-k="show.stars"> Stars</label>
             <label><input type="checkbox" id="showBlurb" data-k="show.blurb"> Paragraph</label>
             <label><input type="checkbox" id="showHandle" data-k="show.handle"> Handle</label>
           </div>
+          <div class="field"><span class="lbl">Director credit</span><div class="seg" id="directorInSeg"></div></div>
           <div class="field"><span class="lbl">Handle position</span><div class="seg grid3" id="handlePosSeg"></div></div>
         </div>
       </details>
