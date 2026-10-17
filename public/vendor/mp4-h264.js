@@ -1,4 +1,4 @@
-/*! mp4-h264 1.0.7 | MIT License | Copyright (c) 2017 Matt DesLauriers | https://github.com/mattdesl/mp4-h264
+/*! mp4-h264 1.0.7 | MIT License (full text in LICENSES.txt) | Copyright (c) 2017 Matt DesLauriers | https://github.com/mattdesl/mp4-h264
     Wraps minih264 (CC0) and minimp4 (CC0) by lieff. Changed from an ES module to a classic script, and createNamedFunction and the embind invoker use closures instead of new Function, so no unsafe-eval is needed. */
 
 var Mp4H264 = (function() {
