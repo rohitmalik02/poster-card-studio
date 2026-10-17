@@ -335,8 +335,10 @@ function loadMuxer() {
 async function videoConfig(width, height) {
   if (typeof VideoEncoder === "undefined") return null;
   // Software encoding first: hardware encoders (notably on Windows) can leave out the decoder setup an MP4 needs.
+  // Baseline profile only: it has no B-frames, so chunks arrive in display order (Firefox reorders High/Main
+  // frames, and WebCodecs doesn't expose the offsets an MP4 would need to put them back).
   for (const hardwareAcceleration of ["prefer-software", "no-preference"]) {
-    for (const codec of ["avc1.640032", "avc1.4d0032", "avc1.42e032", "avc1.640028"]) {
+    for (const codec of ["avc1.42e032", "avc1.420032", "avc1.42e028"]) {
       const cfg = { codec, width, height, bitrate: 10e6, framerate: FPS, hardwareAcceleration, avc: { format: "avc" } };
       try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch (e) { /* try the next */ }
     }
