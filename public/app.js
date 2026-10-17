@@ -435,21 +435,24 @@ function metaText() {
   return [state.year, dir, state.runtime, state.genre].map(s => (s || "").trim()).filter(Boolean).join("   ·   ");
 }
 
-// Billing block: the small credit lines under a film poster. DIRECTED BY …, then STARRING A · B, dropping
-// names from the end (never shrinking the type) when the line runs wider than the column.
+// Billing block: the small credit lines under a film poster, DIR. and CAST, labels dimmer than the names.
+// Names drop from the end (the type never shrinks) when a line runs wider than the column.
 const BILL_SIZE = 17, BILL_GAP = 12;
 function buildBilling(ctx, width) {
   const p = P(), items = []; let h = 0;
-  const tr = p.label.track * 0.55, color = "rgba(255,255,255,0.68)";
+  const track = p.label.track * 0.55, sp = BILL_SIZE * 0.7;
   ctx.font = fontStr(p.label, BILL_SIZE);
-  const fit = (prefix, names) => {
-    for (let n = names.length; n >= 1; n--) { const t = (prefix + names.slice(0, n).join("  ·  ")).toUpperCase(); if (trackedWidth(ctx, t, tr, BILL_SIZE) <= width || n === 1) return t; }
+  const line = (label, names) => {
+    for (let n = names.length; n >= 1; n--) {
+      const text = names.slice(0, n).join("  ·  ").toUpperCase();
+      if (trackedWidth(ctx, label, track, BILL_SIZE) + sp + trackedWidth(ctx, text, track, BILL_SIZE) <= width || n === 1) return text;
+    }
     return "";
   };
   const dir = state.directorIn !== "top" && (state.director || "").trim();
   const cast = state.show.cast ? (state.cast || "").split(/\s*(?:,|·|&|\band\b)\s*/i).map(s => s.trim()).filter(Boolean) : [];
-  if (dir) { items.push({ kind: "label", text: fit("Directed by ", [dir]), size: BILL_SIZE, color, track: tr, y: h }); h += BILL_SIZE; }
-  if (cast.length) { if (h) h += BILL_GAP; items.push({ kind: "label", text: fit("Starring ", cast), size: BILL_SIZE, color, track: tr, y: h }); h += BILL_SIZE; }
+  if (dir) { items.push({ kind: "bill", label: "DIR.", names: line("DIR.", [dir]), size: BILL_SIZE, track, sp, y: h }); h += BILL_SIZE; }
+  if (cast.length) { if (h) h += BILL_GAP; items.push({ kind: "bill", label: "CAST", names: line("CAST", cast), size: BILL_SIZE, track, sp, y: h }); h += BILL_SIZE; }
   return { h, items };
 }
 
@@ -521,6 +524,12 @@ function drawBlock(ctx, block, x, y, align) {
         else ctx.fillText(ln, x, base);
       });
       ctx.restore(); clearTracking(ctx);
+    } else if (it.kind === "bill") {
+      ctx.font = fontStr(p.label, it.size);
+      const lw = trackedWidth(ctx, it.label, it.track, it.size), total = lw + it.sp + trackedWidth(ctx, it.names, it.track, it.size);
+      const sx = align === "center" ? x - total / 2 : align === "right" ? x - total : x, base = top + it.size / 2 + capHeight(ctx) / 2;
+      ctx.fillStyle = "rgba(255,255,255,0.42)"; drawTracked(ctx, it.label, sx, base, it.track, it.size, "left");
+      ctx.fillStyle = "rgba(255,255,255,0.8)"; drawTracked(ctx, it.names, sx + lw + it.sp, base, it.track, it.size, "left");
     } else if (it.kind === "rule") {
       ctx.fillStyle = state.accent; const w = 56;
       ctx.fillRect(align === "center" ? x - w / 2 : align === "right" ? x - w : x, top, w, 3);
@@ -771,13 +780,18 @@ function planLayout(ctx, W, H) {
     const gap = Math.round(H * 0.03), colW = Math.min(W - 2 * pad, 940);
     const top = buildTop(ctx, colW, { maxLines: 2, cap: H / W > 1.5 ? 124 : 108 });
     const posterMin = H * (H / W > 1.5 ? 0.5 : 0.47);
-    const bill = buildBilling(ctx, colW), billH = bill.h ? bill.h + BILL_GAP * 2 : 0;
+    // with credits under the poster, the poster gives up a little height so the column can breathe
+    const bill = buildBilling(ctx, colW), billH = bill.h ? bill.h + BILL_GAP * 2 + Math.round(H * 0.025) : 0;
     const bottom = buildBottom(ctx, Math.min(colW, 860), H - 2 * pad - top.h - 2 * gap - posterMin - billH);
     const avail = H - 2 * pad - top.h - bottom.h - 2 * gap - billH;
     const ph = Math.min(avail, (W - 2 * pad) * 1.5) * scale, pw = ph * 2 / 3;
-    const cy = pad + top.h + gap + avail / 2;
-    drawPoster(ctx, W / 2 - pw / 2, cy - ph / 2, pw, ph);
-    if (bill.h) drawBlock(ctx, bill, W / 2, cy + ph / 2 + BILL_GAP * 2, "center");
+    // Even rhythm: the same gap above the poster, between poster and credits, and below the credits.
+    const free = H - 2 * pad - top.h - bottom.h - ph - bill.h;
+    const b = bill.h ? free / 3 : 0;
+    const above = bill.h ? free / 3 : free / 2;
+    const py = pad + top.h + above;
+    drawPoster(ctx, W / 2 - pw / 2, py, pw, ph);
+    if (bill.h) drawBlock(ctx, bill, W / 2, py + ph + b, "center");
     drawBlock(ctx, top, W / 2, pad, "center");
     drawBlock(ctx, bottom, W / 2, H - pad - bottom.h, "center");
   } };
@@ -1082,7 +1096,7 @@ document.getElementById("copyCaption").addEventListener("click", () => {
     `${title}${state.year ? ` (${state.year})` : ""}${+state.rating > 0 ? "  " + starText(+state.rating) : ""}`,
     "", plain, "",
     [state.director && `Dir. ${state.director}`, state.runtime, state.genre].filter(Boolean).join(" · "),
-    (state.cast || "").trim() ? `Starring ${(state.cast || "").trim()}` : "",
+    (state.cast || "").trim() ? `Cast: ${(state.cast || "").trim()}` : "",
     "", `#${tag || "film"} #filmrecommendations #moviestowatch #letterboxd #cinephile`,
   ];
   const text = lines.join("\n").replace(/\n{3,}/g, "\n\n");
