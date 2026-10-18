@@ -11,7 +11,7 @@ const DEFAULTS = {
   kicker: "PMR#1", title: "Dangers of the Night", line: "Films that only make sense after dark.", count: true,
   align: "left", vpos: "bottom", color: null, shade: 0.5, handlePos: "auto",
   focusX: 0.5, focusY: 0.5, zoom: 1,
-  swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7,
+  swirl: 0.55, flow: 0.6, glass: 0.55, glitter: 0.5, seed: 7, colourSeed: 0, // 0 = colours ranked by area
   source: "all", sourceId: null, // essence colours: every poster, or one film
   motion: false, intensity: 0.4, loop: "12", // essence only: a seamless loop, exported as MP4
 };
@@ -75,7 +75,8 @@ function deckPalette() {
     if (m) { m.rgb = mixRgb(m.rgb, c.rgb, c.w / (m.w + c.w)); m.w += c.w; }
     else merged.push({ ...c, rgb: c.rgb.slice() });
   }
-  return merged.slice(0, 14);
+  // ranked by total area across the deck; Shuffle colours re-deals the weights when a colour reads too loud
+  return merged.sort((a, b) => b.w - a.w).slice(0, 14);
 }
 
 /* ---------------- colour essence field ---------------- */
@@ -100,9 +101,11 @@ const fbm = (n, x, y) => n(x, y) * 0.55 + n(x * 2.1 + 5.2, y * 2.1 + 9.7) * 0.3 
 // and brightens on its own phase. Every term is periodic in t, so the last frame flows into the first.
 let fieldCache = null;
 function essenceField(pal, w, h, t = null) {
-  const key = [w, h, t, hero.seed, hero.swirl, hero.flow, hero.intensity, ...pal.map(c => toHex(c.rgb) + c.w.toFixed(3))].join("|");
+  const key = [w, h, t, hero.seed, hero.colourSeed, hero.swirl, hero.flow, hero.intensity, ...pal.map(c => toHex(c.rgb) + c.w.toFixed(3))].join("|");
   if (fieldCache && fieldCache.key === key) return fieldCache;
   const rnd = mulberry32(hero.seed * 7919 + 17), noise = makeNoise(rnd);
+  // Shuffle colours: re-deal the weights (and so which colours get the wide arms and the base tone).
+  if (hero.colourSeed) { const cr = mulberry32(hero.colourSeed * 2654435 + 101); pal = pal.map(c => ({ ...c, w: c.w * (0.2 + cr() * 1.6) })); }
   const sorted = pal.slice().sort((a, b) => b.w - a.w);
   const darkest = pal.reduce((a, b) => (lumOf(a.rgb) < lumOf(b.rgb) ? a : b)).rgb;
   const base0 = mixRgb(sorted[0].rgb, darkest, 0.5), base1 = mixRgb(sorted[Math.min(1, sorted.length - 1)].rgb, darkest, 0.35);
@@ -310,7 +313,6 @@ function drawWords(ctx, W, H, K) {
 /* ---------------- render ---------------- */
 function render(canvas, outW, t = null) {
   if (canvas.id === "preview" && animating()) { if (t === null) t = liveT(); kick(); }
-  if (t !== null) t = breathe(t);
   const R = P.RATIOS[P.state.ratio] || P.RATIOS["3:4"], W = R.w, H = R.h, K = outW / W;
   P.setK(K);
   canvas.width = Math.round(W * K); canvas.height = Math.round(H * K);
@@ -321,20 +323,6 @@ function render(canvas, outW, t = null) {
 }
 
 /* ---------------- motion ---------------- */
-// Loop time with a held breath: the motion eases to a standstill around the loop point and drifts on at an even
-// pace elsewhere. It also hides H.264's warm-up (encoders stall for a few frames after the opening keyframe,
-// which shows as a jerk on anything moving), and keeps the loop seam soft. Speed is 1 - g(t), g a narrow
-// cos^16 bump at t = 0, normalised so the loop still ends at 1.
-const BREATH = (() => {
-  const N = 1024, cum = new Float64Array(N + 1);
-  for (let i = 0; i < N; i++) cum[i + 1] = cum[i] + (1 - ((1 + Math.cos(TAU * (i + 0.5) / N)) / 2) ** 16) / N;
-  for (let i = 0; i <= N; i++) cum[i] /= cum[N];
-  return cum;
-})();
-function breathe(t) {
-  const x = (((t % 1) + 1) % 1) * (BREATH.length - 1), i = Math.floor(x), f = x - i;
-  return BREATH[i] + (BREATH[Math.min(i + 1, BREATH.length - 1)] - BREATH[i]) * f;
-}
 const FPS = 30, VIDEO_W = 1080; // Instagram plays video at 1080 wide at most
 const loopSec = () => +hero.loop || 8;
 const moving = () => !!hero.enabled && hero.design === "essence" && !!hero.motion;
@@ -418,6 +406,7 @@ function sync() {
   seg("cvDesign", "design", () => { hero.color = null; }); seg("cvAlign", "align"); seg("cvPos", "vpos"); seg("cvHandlePos", "handlePos");
   $("cvEssenceCtl").hidden = hero.design !== "essence"; $("cvStillCtl").hidden = hero.design !== "still";
   $("cvMotionCtl").hidden = !hero.motion; seg("cvLoop", "loop");
+  $("cvRankColours").hidden = !hero.colourSeed;
   seg("cvSource", "source", () => { if (!hero.sourceId) hero.sourceId = sourceSlide()?.id || null; });
   refresh();
 }
@@ -447,6 +436,8 @@ document.querySelectorAll("[data-cv]").forEach(el => el.addEventListener("input"
   changed();
 }));
 $("cvShuffle").addEventListener("click", () => { hero.seed = (hero.seed * 48271 + 11) % 2147483647; changed(); });
+$("cvShuffleColours").addEventListener("click", () => { hero.colourSeed = (hero.colourSeed * 69621 + 7) % 2147483647 || 1; sync(); changed(); });
+$("cvRankColours").addEventListener("click", () => { hero.colourSeed = 0; sync(); changed(); });
 
 async function setStill(url) {
   still = await P.loadImage(url); stillPal = null;

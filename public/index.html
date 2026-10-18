@@ -64,7 +64,11 @@
             <div class="field"><label for="cvFlow">Flow <output data-cvo="flow"></output></label><input type="range" id="cvFlow" data-cv="flow" min="0" max="1" step="0.01"></div>
             <div class="field"><label for="cvGlass">Glassy blur <output data-cvo="glass"></output></label><input type="range" id="cvGlass" data-cv="glass" min="0" max="1" step="0.01"></div>
             <div class="field"><label for="cvGlitter">Glitter sand <output data-cvo="glitter"></output></label><input type="range" id="cvGlitter" data-cv="glitter" min="0" max="1" step="0.01"></div>
-            <button class="btn" id="cvShuffle" type="button">Reshuffle the swirl</button>
+            <div class="uploader">
+              <button class="btn" id="cvShuffle" type="button">Reshuffle shapes</button>
+              <button class="btn" id="cvShuffleColours" type="button">Shuffle colours</button>
+            </div>
+            <button class="linkbtn" id="cvRankColours" type="button">Back to colours ranked by area</button>
             <div class="toggles"><label><input type="checkbox" id="cvMotion" data-cv="motion"> Motion: the swirl flows and the glitter twinkles (exports as a looping MP4)</label></div>
             <div class="sec-inner" id="cvMotionCtl">
               <div class="field"><label for="cvIntensity">Intensity <output data-cvo="intensity"></output></label><input type="range" id="cvIntensity" data-cv="intensity" min="0" max="1" step="0.01"></div>
