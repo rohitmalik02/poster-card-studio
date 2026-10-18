@@ -313,6 +313,7 @@ function drawWords(ctx, W, H, K) {
 /* ---------------- render ---------------- */
 function render(canvas, outW, t = null) {
   if (canvas.id === "preview" && animating()) { if (t === null) t = liveT(); kick(); }
+  if (t !== null) t = breathe(t);
   const R = P.RATIOS[P.state.ratio] || P.RATIOS["3:4"], W = R.w, H = R.h, K = outW / W;
   P.setK(K);
   canvas.width = Math.round(W * K); canvas.height = Math.round(H * K);
@@ -323,6 +324,13 @@ function render(canvas, outW, t = null) {
 }
 
 /* ---------------- motion ---------------- */
+// Ebb and flow: loop time runs at speed 1 - EBB·cos(2πnt), slowest (about a third) at the loop point and
+// swelling to 1.65× between, one breath every 4-6 s. It never stops, and since sin(2πn) = 0 the loop still closes.
+const EBB = 0.65;
+function breathe(t) {
+  const n = Math.max(1, Math.round(loopSec() / 6));
+  return t - EBB * Math.sin(TAU * n * t) / (TAU * n);
+}
 const FPS = 30, VIDEO_W = 1080; // Instagram plays video at 1080 wide at most
 const loopSec = () => +hero.loop || 8;
 const moving = () => !!hero.enabled && hero.design === "essence" && !!hero.motion;
