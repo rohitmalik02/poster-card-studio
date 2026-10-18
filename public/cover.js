@@ -75,8 +75,7 @@ function deckPalette() {
     if (m) { m.rgb = mixRgb(m.rgb, c.rgb, c.w / (m.w + c.w)); m.w += c.w; }
     else merged.push({ ...c, rgb: c.rgb.slice() });
   }
-  // ranked by total area across the deck; Shuffle colours re-deals the weights when a colour reads too loud
-  return merged.sort((a, b) => b.w - a.w).slice(0, 14);
+  return merged.slice(0, 14);
 }
 
 /* ---------------- colour essence field ---------------- */
