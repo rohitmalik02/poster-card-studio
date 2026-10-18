@@ -10,3 +10,6 @@ node_modules/
 Thumbs.db
 mocks/
 *.psd
+
+# Saved Poster Card Studio projects (they embed every poster)
+/*.json
