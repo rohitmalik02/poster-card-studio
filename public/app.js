@@ -1203,6 +1203,9 @@ async function boot() {
     if (old && !state.sample) { await idbPut(`deck:${deck[0].id}`, old); try { localStorage.removeItem(POSTER_KEY); } catch (e) { /* ignore */ } }
     else if (!state.sample) { deck[0].sample = Object.keys(window.SAMPLE_POSTERS || {})[0] || null; }
   }
+  // Put the current slide's words in place before the posters load: anything that draws thumbnails meanwhile
+  // (the cover's own startup does) stashes state into deck[cur], and must not stash the previous look's words.
+  loadSlide(cur);
   const loaded = await Promise.all(deck.map(imagesFor));
   deck.forEach((sl, i) => imgs.set(sl.id, loaded[i]));
   loadSlide(cur);
