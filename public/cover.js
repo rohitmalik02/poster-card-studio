@@ -461,9 +461,36 @@ async function takeFile(file) {
 }
 $("cvStillFile").addEventListener("change", e => { const f = e.target.files[0]; e.target.value = ""; takeFile(f); });
 
+// Any animation as an MP4: draw(ctx, i) paints frame i of `frames` onto a width × height canvas. Used by kit.js.
+async function encodeVideo(width, height, frames, draw, onProgress = () => {}) {
+  if (typeof WebAssembly === "undefined") throw new Error("This browser can't run the video encoder.");
+  const M = await loadEncoder();
+  width &= ~1; height &= ~1;
+  const c = document.createElement("canvas"); c.width = width; c.height = height;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const enc = M.create({ width, height, fps: FPS, quantizationParameter: QP, speed: 4, groupOfPictures: frames, stride: 4 });
+  exporting = true;
+  try {
+    for (let i = 0; i < frames; i++) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; ctx.filter = "none";
+      draw(ctx, i);
+      enc.encodeRGB(ctx.getImageData(0, 0, width, height).data);
+      onProgress((i + 1) / frames);
+      if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
+    }
+    return new Blob([enc.end()], { type: "video/mp4" });
+  } catch (e) {
+    try { enc.end(); } catch (_) { /* already finished */ }
+    throw e;
+  } finally {
+    exporting = false; kick();
+  }
+}
+
 window.Cover = {
   render, sync, takeFile, refresh, flush, hold: () => clearTimeout(saveT),
-  moving, video: renderVideo, loopSec,
+  moving, video: renderVideo, loopSec, encodeVideo, FPS,
+  info: () => ({ kicker: hero.kicker || "", title: hero.title || "", line: hero.line || "", design: hero.design }),
   enabled: () => !!hero.enabled,
   setEnabled: v => { hero.enabled = !!v; changed(); },
   title: () => hero.title || "cover",

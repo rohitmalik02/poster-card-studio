@@ -157,6 +157,12 @@
             <textarea id="blurb" data-k="blurb"></textarea>
             <div class="textmeta"><button class="linkbtn" id="highlight" type="button" title="Select a phrase above, then click">Highlight selection</button><span id="wc"></span></div>
           </div>
+          <div class="kitfields">
+            <span class="lbl">For the kit <span>reels and stories · optional</span></span>
+            <div class="field"><label for="reelLine">Reel line <span>4–8 words, the hook</span></label><input type="text" id="reelLine" data-k="reelLine" placeholder="His life is the show."></div>
+            <div class="field"><label for="reasons">Three quick reasons <span>one per line</span></label><textarea id="reasons" data-k="reasons" rows="3" placeholder="Jim Carrey's best performance&#10;Predicted reality TV by years&#10;That ending"></textarea></div>
+            <div class="field"><label for="trivia">Trivia <span>for the "guess the film" story</span></label><input type="text" id="trivia" data-k="trivia" placeholder="Which film was shot as one 37-minute take?"></div>
+          </div>
           <div class="field"><label for="handle">Handle</label><input type="text" id="handle" data-k="handle"></div>
           <div class="toggles">
             <label><input type="checkbox" id="showKicker" data-k="show.kicker"> Eyebrow</label>
@@ -210,6 +216,35 @@
         </div>
       </details>
 
+      <details class="deck-only kit-panel" id="kitPanel">
+        <summary>Kit <span class="tag">experimental</span></summary>
+        <div class="sec">
+          <p class="hint">Turns this project into reels, stories and captions that point back to the post. Everything is made on this device.</p>
+          <div class="field">
+            <span class="lbl">Preview</span>
+            <div class="kit-preview">
+              <canvas id="kitCanvas" aria-label="Kit preview"></canvas>
+              <div class="kit-preview-ctl">
+                <select id="kitAsset" aria-label="Asset to preview"></select>
+                <button class="btn small" id="kitPlay" type="button">Play</button>
+              </div>
+            </div>
+          </div>
+          <div class="field"><span class="lbl">Spotlight reels <span>one 15 s reel per starred film</span></span><div class="kit-films" id="kitFilms"></div></div>
+          <div class="field"><label for="kitBpm">Recap tempo <output id="kitBpmOut"></output></label><input type="range" id="kitBpm" min="70" max="160" step="1"></div>
+          <div class="field"><span class="lbl">Recap transition</span><div class="seg" id="kitTransition">
+            <button type="button" data-v="static">Static</button><button type="button" data-v="flash">Flash</button><button type="button" data-v="cut">Cut</button><button type="button" data-v="dissolve">Dissolve</button>
+          </div></div>
+          <div class="row">
+            <div class="field"><label for="kitPairA">This or that</label><select id="kitPairA"></select></div>
+            <div class="field"><label for="kitPairB">versus</label><select id="kitPairB"></select></div>
+          </div>
+          <div class="toggles"><label><input type="checkbox" id="kitStoryVideo"> Animate the "new list" story when the cover moves</label></div>
+          <button class="btn primary" id="kitExport" type="button">Export kit (.zip)</button>
+          <p class="hint" id="kitStatus" aria-live="polite"></p>
+        </div>
+      </details>
+
       <details class="cover-hide">
         <summary>Start over</summary>
         <div class="sec">
@@ -253,5 +288,6 @@
 <script src="samples.js"></script>
 <script src="app.js"></script>
 <script src="cover.js"></script>
+<script src="kit.js"></script>
 </body>
 </html>

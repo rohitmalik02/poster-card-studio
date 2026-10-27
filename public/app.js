@@ -177,7 +177,8 @@ async function setPoster(src, { persist = true, keepAccent = false } = {}) {
    Each slide keeps its own words, poster, backdrop still and accent; the look is shared.
    The current slide's words live in `state` (so every control keeps working); the rest wait in `deck`. */
 const DECK_KEY = "poster-card-studio:deck:v1";
-const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "cast", "runtime", "genre", "rating", "blurb", "accent", "palette"];
+const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "cast", "runtime", "genre", "rating", "blurb", "accent", "palette", "reelLine", "reasons", "trivia"];
+const TEXT_DEFAULTS = ["cast", "reelLine", "reasons", "trivia"]; // optional fields slides saved earlier may lack
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pick = o => Object.fromEntries(CONTENT_KEYS.map(k => [k, clone(o[k] ?? null)]));
 let deck = [], cur = 0;
@@ -190,7 +191,7 @@ function stash() {
 }
 function loadSlide(i) {
   cur = i; const sl = deck[i];
-  for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]); else if (k === "cast") state.cast = ""; // slides saved before the cast field
+  for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]); else if (TEXT_DEFAULTS.includes(k)) state[k] = ""; // fields newer than the slide
   if (!state.accent) state.accent = "#e9b65a";
   if (!Array.isArray(state.palette)) state.palette = [];
   const im = imgs.get(sl.id) || {};
@@ -221,7 +222,7 @@ function addSlide() {
   if (deck.length >= 20) { toast("Instagram carousels stop at 20 slides."); return; }
   stash();
   deck.splice(cur + 1, 0, { id: uid(), sample: null, kicker: state.kicker, title: "New film", year: "", director: "", runtime: "", genre: "",
-    rating: 0, blurb: "Why it's worth watching, in one or two lines.", cast: "", accent: state.accent, palette: state.palette });
+    rating: 0, blurb: "Why it's worth watching, in one or two lines.", cast: "", reelLine: "", reasons: "", trivia: "", accent: state.accent, palette: state.palette });
   selectSlide(cur + 1);
   toast("Slide added. Drop a poster on it.");
 }
@@ -241,7 +242,9 @@ function moveSlide(i, d) {
   renderDeck(); schedule();
 }
 let thumbTimer = 0;
+const deckListeners = []; // kit.js refreshes its film list when slides change
 function renderDeck() {
+  deckListeners.forEach(fn => { try { fn(); } catch (e) { /* ignore */ } });
   const box = document.getElementById("deck"); box.innerHTML = "";
   const mk = (txt, label, fn) => { const t = document.createElement("button"); t.type = "button"; t.className = "icon-btn"; t.textContent = txt; t.title = label; t.setAttribute("aria-label", label); t.addEventListener("click", fn); return t; };
   if (window.Cover?.enabled()) {
@@ -1113,13 +1116,13 @@ document.getElementById("resetLook").addEventListener("click", () => {
 /* ---------------- project files ----------------
    One .json file holds the whole carousel: the look, every slide's words, the cover, and the images
    (posters, backdrop stills, cover still) as data URLs. Opening one replaces what this browser holds. */
-const PROJECT_APP = "poster-card-studio", COVER_KEY = "poster-card-studio:cover:v1";
+const PROJECT_APP = "poster-card-studio", COVER_KEY = "poster-card-studio:cover:v1", KIT_KEY = "poster-card-studio:kit:v1";
 const isProjectFile = f => !!f && (/\.json$/i.test(f.name) || f.type === "application/json");
 const readJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
 
 async function saveProject() {
-  save(); window.Cover?.flush();
-  const look = readJSON(STORE_KEY), deckData = readJSON(DECK_KEY), cover = readJSON(COVER_KEY);
+  save(); window.Cover?.flush(); window.Kit?.flush();
+  const look = readJSON(STORE_KEY), deckData = readJSON(DECK_KEY), cover = readJSON(COVER_KEY), kit = readJSON(KIT_KEY);
   if (!deckData) { toast("Couldn't read this browser's storage, so there's nothing to save."); return; }
   const images = {};
   const keys = [...deck.flatMap(sl => [`deck:${sl.id}`, `deck:${sl.id}:bg`]), "cover:still"];
@@ -1130,6 +1133,7 @@ async function saveProject() {
     if (!sl.sample && p && !images[`deck:${sl.id}`]) images[`deck:${sl.id}`] = downsized(p, 1400).toDataURL("image/jpeg", 0.92);
   });
   const file = { app: PROJECT_APP, version: 1, savedAt: new Date().toISOString(), look, deck: deckData, cover, images };
+  if (kit) file.kit = kit; // older builds of the tool ignore this
   const name = cover?.enabled ? [cover.kicker, cover.title].filter(Boolean).join(" ") : (deck[0] && (cur === 0 ? state.title : deck[0].title));
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
@@ -1147,7 +1151,7 @@ function checkProject(p) {
   const slides = p.deck?.slides;
   if (!Array.isArray(slides) || !slides.length || slides.length > 20) return "That project has no readable slides.";
   if (!slides.every(sl => isObj(sl) && typeof sl.id === "string" && /^[a-z0-9]{1,16}$/.test(sl.id))) return "That project's slides are damaged.";
-  if ((p.look != null && !isObj(p.look)) || (p.cover != null && !isObj(p.cover)) || !isObj(p.images)) return "That project file is damaged.";
+  if ((p.look != null && !isObj(p.look)) || (p.cover != null && !isObj(p.cover)) || (p.kit != null && !isObj(p.kit)) || !isObj(p.images)) return "That project file is damaged.";
   for (const [k, v] of Object.entries(p.images)) if (!IMAGE_KEY.test(k) || typeof v !== "string" || !DATA_IMAGE.test(v)) return "That project's images are damaged.";
   return null;
 }
@@ -1158,7 +1162,7 @@ async function openProject(file) {
   const problem = checkProject(p); if (problem) { toast(problem); return; }
   const n = p.deck.slides.length;
   if (!confirm(`Open "${file.name}" (${n} slide${n === 1 ? "" : "s"})?\n\nThis replaces the carousel you have open now. Save it as a project first if you want to keep it.`)) return;
-  frozen = true; window.Cover?.hold(); clearTimeout(saveTimer);
+  frozen = true; window.Cover?.hold(); window.Kit?.hold(); clearTimeout(saveTimer);
   try {
     await idbClear();
     for (const [k, v] of Object.entries(p.images)) await idbPut(k, v);
@@ -1166,6 +1170,7 @@ async function openProject(file) {
     localStorage.setItem(DECK_KEY, JSON.stringify({ cur: at, slides: p.deck.slides }));
     if (p.look) localStorage.setItem(STORE_KEY, JSON.stringify(p.look)); else localStorage.removeItem(STORE_KEY);
     if (p.cover) localStorage.setItem(COVER_KEY, JSON.stringify(p.cover)); else localStorage.removeItem(COVER_KEY);
+    if (p.kit) localStorage.setItem(KIT_KEY, JSON.stringify(p.kit)); else localStorage.removeItem(KIT_KEY);
   } catch (e) { frozen = false; toast("This browser wouldn't store the project (private window or full storage?)."); return; }
   location.reload();
 }
@@ -1224,10 +1229,15 @@ boot();
 // Shared with cover.js
 const deckSlides = () => deck.map((sl, i) => ({ id: sl.id, title: i === cur ? state.title : sl.title, poster: (i === cur ? posterCanvas : imgs.get(sl.id)?.poster) || null }));
 const deckPosters = () => deckSlides().map(s => s.poster).filter(Boolean);
+// Every slide's words and poster, with the current slide read live from the editor.
+const deckData = () => deck.map((sl, i) => {
+  const c = i === cur ? pick(state) : sl;
+  return { ...c, id: sl.id, poster: (i === cur ? posterCanvas : imgs.get(sl.id)?.poster) || null };
+});
 window.PCS = {
   RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
   get state() { return state; }, preset: P, deckPosters, deckSlides, deckCount: () => deck.length,
   drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
-  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(),
+  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(), deckData, makeZip, onDeckChange: fn => deckListeners.push(fn),
 };
 })();
