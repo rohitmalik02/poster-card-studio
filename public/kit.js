@@ -148,10 +148,23 @@ function staticNoise(ctx, seed, alpha) {
 /* ---------------- spotlight reel (one film, then the whole list; 30 s or 1 min) ----------------
    reel title · the film (poster, title and reel line, then three reasons) · "want to watch more like this?" ·
    the whole list lands (grid or scatter), then a sweep lifts each poster with its title · follow call */
-function timeline() {
-  const L = spotLen(), d = L === 60 ? { title: 3.0, film: 28.5, more: 3.0, list: 18.0 } : { title: 2.4, film: 13.6, more: 2.0, list: 8.0 };
-  const film = d.title - 0.2, more = film + d.film + 0.35, list = more + d.more - 0.2, end = list + d.list;
-  return { L, title: d.title, film, filmEnd: film + d.film, more, list, end };
+// Timing follows the words: each reason stays up for a reading pace (by word count), the list moment scales with
+// the number of films, and the whole reel is capped (Quick 30 s, Long 1 min); long text gets compressed to fit.
+function timeline(f) {
+  const long = kit.spotLength === "60", cap = long ? 60 : 30, n = Math.max(1, films().length);
+  const words = f ? reasonsOf(f).map(r => plain(r).split(/\s+/).filter(Boolean).length) : [];
+  let reasons = words.map(w => (long ? 1.1 : 0.7) + w * (long ? 0.3 : 0.22));
+  const d = { title: long ? 2.8 : 2.2, intro: long ? 3.4 : 2.2, more: long ? 2.4 : 1.8, list: long ? 3 + n * 1.2 : 2.2 + n * 0.7, follow: long ? 4 : 3 };
+  const fixed = () => d.title + d.intro + 0.9 + d.more + d.list + d.follow;
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  if (fixed() + sum(reasons) > cap) { // squeeze the reasons first (never below 1.6 s each), then the list moment
+    const k = Math.max(0, (cap - fixed()) / Math.max(0.01, sum(reasons)));
+    reasons = reasons.map(r => Math.max(1.5, r * k));
+    const over = fixed() + sum(reasons) - cap; if (over > 0) d.list = Math.max(2 + n * 0.5, d.list - over);
+  }
+  const film = d.title - 0.2, shrink = film + d.intro, reasonsFrom = shrink + 0.6;
+  const filmEnd = reasonsFrom + sum(reasons) + 0.3, more = filmEnd + 0.35, list = more + d.more - 0.2, end = list + d.list;
+  return { L: Math.min(cap, end + d.follow), title: d.title, film, shrink, reasonsFrom, reasonDur: reasons, filmEnd, more, list, end };
 }
 // Where each poster sits in the list moment. Grid: the column count that gives the biggest posters, centred.
 // Scatter: the same slots, jittered, tilted and resized like prints tossed on a table (seeded, so it's repeatable).
@@ -180,95 +193,190 @@ function listLayout(list, featuredId) {
   if (scatter) slots.forEach(sl => { if (sl.g.id === featuredId) sl.z = 2; }); // the featured film lands on top
   return { slots, tw, th, gy0, areaTop };
 }
-function drawSpotlight(ctx, t, f, idx, n) {
-  const acc = accentOf(f), list = films(), cx = W / 2, TL = timeline();
-  drawBackdrop(ctx, backdrop(f.poster, f.id, acc), 1.04 + 0.05 * (t / TL.L));
-  // 1. the reel's title
-  const ti = span(t, 0.1, TL.title + 0.1, 0.35);
-  if (ti > 0) {
-    const r = fit(ctx, reelTitle(), "title", SAFE.right - SAFE.left, 4, 150, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    const y = MID - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
-    label(ctx, info().kicker, cx, y - 70, 34, acc, "center", ti);
-    lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", ti);
+/* ---------------- clips: a video per film, kept in this browser (too big for project files) ---------------- */
+const clips = new Map(); // slide id -> { video, url, dur, ready }
+function attachClip(id, blob) {
+  const old = clips.get(id); if (old) { old.video.removeAttribute("src"); URL.revokeObjectURL(old.url); }
+  const url = URL.createObjectURL(blob), v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+  const c = { video: v, url, dur: 0, ready: false }; clips.set(id, c);
+  v.addEventListener("loadedmetadata", () => { c.dur = v.duration || 0; });
+  v.addEventListener("loadeddata", () => { c.ready = true; syncClipUI(); soon(); });
+  return c;
+}
+async function loadClip(id) { if (clips.has(id)) return; const b = await P.idbGet("clip:" + id); if (b) attachClip(id, b); }
+const clipOf = f => { const c = clips.get(f.id); return c && c.ready ? c : null; };
+const clipStart = id => +((kit.clipStart || {})[id] || 0);
+function clipTime(f, t) {
+  const c = clipOf(f), TL = timeline(f); if (!c) return 0;
+  return Math.min(clipStart(f.id) + clamp(t - TL.film, 0, TL.filmEnd - TL.film), Math.max(0, c.dur - 0.05));
+}
+function seekTo(v, time) {
+  if (Math.abs(v.currentTime - time) < 0.01) return Promise.resolve();
+  return new Promise(res => { let done = false; const fin = () => { if (done) return; done = true; v.removeEventListener("seeked", fin); res(); };
+    v.addEventListener("seeked", fin); v.currentTime = time; setTimeout(fin, 3000); });
+}
+// The clip, cover-fitted to the frame; `blur` 0..1 mixes in a soft version (drawn small and scaled up, which is cheap)
+const blurBuf = document.createElement("canvas"); blurBuf.width = 270; blurBuf.height = 480;
+function drawClip(ctx, v, blur = 0) {
+  const vw = v.videoWidth || 16, vh = v.videoHeight || 9, s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
+  ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  if (blur > 0) {
+    const b = blurBuf.getContext("2d"), bs = Math.max(270 / vw, 480 / vh);
+    if (P.FILTER_OK) b.filter = "blur(5px)";
+    b.drawImage(v, (270 - vw * bs) / 2, (480 - vh * bs) / 2, vw * bs, vh * bs); b.filter = "none";
+    ctx.save(); ctx.globalAlpha = blur; ctx.imageSmoothingQuality = "high"; ctx.drawImage(blurBuf, -40, -70, W + 80, H + 140);
+    ctx.globalAlpha = 0.4 * blur; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
   }
-  // 2. the film: full size and centred, then shrinks and rises to make room for the reasons underneath
+}
+
+// Shared by both modes: the opening reel title, "more like this?", the list moment and the follow call.
+function drawReelTitle(ctx, t, TL, acc) {
+  const ti = span(t, 0.1, TL.title + 0.1, 0.35); if (ti <= 0) return;
+  const r = fit(ctx, reelTitle(), "title", SAFE.right - SAFE.left, 4, 150, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+  const y = MID - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
+  label(ctx, info().kicker, W / 2, y - 70, 34, acc, "center", ti);
+  lines(ctx, r, "title", W / 2, y, pre().title.lh, "center", "#fff", ti);
+}
+function drawMore(ctx, t, TL) {
+  const more = span(t, TL.more, TL.list + 0.2, 0.3); if (more <= 0) return;
+  const r = fit(ctx, "Want to watch more like this?", "title", SAFE.right - SAFE.left, 3, 140, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+  lines(ctx, r, "title", W / 2, MID - h / 2, pre().title.lh, "center", "#fff", more);
+}
+function drawListMoment(ctx, t, TL, list, acc) {
+  if (t < TL.list) return;
+  const cx = W / 2, lay = listLayout(list, null), dim = 1 - 0.9 * fade(t, TL.end - 0.1, 0.4);
+  const stagger = Math.min(0.16, 1.8 / list.length), landed = TL.list + 0.2 + stagger * list.length + 0.4;
+  const sweepEnd = TL.end - 0.5, per = (sweepEnd - landed) / list.length;
+  const cur = t >= landed && t < sweepEnd ? Math.floor((t - landed) / per) : -1, cu = cur >= 0 ? (t - landed - cur * per) / per : 0;
+  const lift = cur >= 0 ? Math.min(ease(cu / 0.25), 1 - ease((cu - 0.8) / 0.2)) : 0;
+  const headY = kit.recapStyle === "scatter" ? lay.areaTop - 40 : lay.gy0 - 34;
+  label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, headY, 28, acc, "center", fade(t, TL.list, 0.3) * dim);
+  const order = lay.slots.map((sl, i) => ({ ...sl, i })).sort((a, b) => (a.i === cur) - (b.i === cur) || a.z - b.z);
+  for (const sl of order) {
+    const a = ease(fade(t, TL.list + 0.2 + sl.i * stagger, 0.3)); if (a <= 0) continue;
+    const on = sl.i === cur, up = on ? lift : 0, others = cur >= 0 && !on ? 1 - 0.45 * lift : 1;
+    drawCard(ctx, card(sl.g, lay.tw), sl.x, sl.y + (1 - a) * 40 - up * 20, sl.scale * (0.92 + 0.08 * a) * (1 + 0.16 * up), a * dim * others, sl.tilt * (1 - up));
+  }
+  if (cur >= 0 && lift > 0) { // the title under the lifted poster
+    const sl = lay.slots[cur], r = fit(ctx, sl.g.title, "title", SAFE.right - SAFE.left - 60, 2, 64, 40);
+    ctx.font = font("title", r.size);
+    const lw = Math.min(SAFE.right - SAFE.left, Math.max(...r.lines.map(l => ctx.measureText(l).width)) + 70), lh = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh) + 44;
+    const ly = clamp(sl.y + lay.th * sl.scale * 1.16 - 10, SAFE.top, SAFE.bottom - lh), lx = clamp(sl.x, SAFE.left + lw / 2, SAFE.right - lw / 2);
+    ctx.save(); ctx.globalAlpha = lift * dim * 0.82; ctx.fillStyle = "#000"; rr(ctx, lx - lw / 2, ly, lw, lh, 20); ctx.fill(); ctx.restore();
+    lines(ctx, r, "title", lx, ly + 20, pre().title.lh, "center", "#fff", lift * dim);
+  }
+}
+function drawFollow(ctx, t, TL, acc) {
+  const br = ease(fade(t, TL.end, 0.45)); if (br <= 0) return;
+  ctx.save(); ctx.globalAlpha = 0.45 * br; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
+  const r = fit(ctx, "Want more recommendations?", "title", SAFE.right - SAFE.left, 3, 124, 72), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+  const y = MID - h / 2 - 60;
+  lines(ctx, r, "title", W / 2, y, pre().title.lh, "center", "#fff", br);
+  label(ctx, handle() ? "Follow " + handle() : "Follow us", W / 2, y + h + 96, 38, acc, "center", fade(t, TL.end + 0.3, 0.4), 0.5);
+  label(ctx, "for more lists like this", W / 2, y + h + 166, 26, "rgba(255,255,255,0.85)", "center", fade(t, TL.end + 0.6, 0.4));
+}
+// Reasons: one font size and one box height for all of them (sized for the longest), so nothing jumps or spills.
+// One text size for all reasons (no more than maxSize, smaller if the longest won't fit boxMax); each box then
+// hugs its own text (hs[i]); h is the tallest, which the layout reserves so nothing moves between reasons.
+function reasonBox(ctx, f, maxW, boxMax, maxSize = 56) {
+  const rs = reasonsOf(f), PADX = 40, PADT = 34, PADB = 30, textW = maxW - PADX * 2 + 20;
+  let size = Math.max(30, Math.round(maxSize)), fits = [], hs = [];
+  for (; size >= 30; size -= 2) {
+    fits = rs.map(txt => { ctx.font = font("body", size); return P.wrapPlain(ctx, txt, textW); });
+    hs = fits.map(l => Math.round(PADT + size * (0.8 + (l.length - 1) * pre().body.lh) + size * 0.3 + PADB));
+    if (Math.max(0, ...hs) <= boxMax) break;
+  }
+  return { rs, fits, size, PADX, PADT, hs, h: Math.max(0, ...hs) };
+}
+function drawReasons(ctx, t, rb, x, y, w, TL, alpha, acc, shadow) {
+  let start = TL.reasonsFrom;
+  rb.rs.forEach((txt, i) => {
+    const s0 = start, s1 = start + (TL.reasonDur[i] || 2); start = s1;
+    const a = span(t, s0, s1, 0.3) * alpha; if (a <= 0) return;
+    const by = y + (1 - ease(fade(t, s0, 0.35))) * 40;
+    const bh = rb.hs[i] || rb.h, bt = shadow ? by + rb.h - bh : by; // overlays sit on the bottom edge, the rest hang from the top
+    ctx.save(); ctx.globalAlpha = a * (shadow ? 0.6 : 0.68); ctx.fillStyle = "#000";
+    if (shadow) { ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 50; ctx.shadowOffsetY = 12; }
+    rr(ctx, x, bt, w, bh, 24); ctx.fill(); ctx.shadowColor = "transparent";
+    ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, x, bt, 10, bh, 5); ctx.fill(); ctx.restore();
+    lines(ctx, { size: rb.size, lines: rb.fits[i] }, "body", x + rb.PADX, (shadow ? by + rb.h - bh : by) + rb.PADT, pre().body.lh, "left", "#fff", a);
+  });
+}
+// The opening lines under the title: year · director, then the cast, then the reel line
+function introBits(ctx, f, maxW) {
+  const meta = [f.year, f.director].filter(Boolean).join("  ·  "), cast = (f.cast || "").split(/\s*,\s*/).filter(Boolean).slice(0, 3).join("  ·  ");
+  const hook = (f.reelLine || "").trim(), hr = hook ? fit(ctx, hook, "body", maxW, 2, 54, 40) : null;
+  const h = (meta ? 52 : 0) + (cast ? 46 : 0) + (hr ? 30 + hr.size * (0.8 + (hr.lines.length - 1) * pre().body.lh) + hr.size * 0.25 : 0);
+  return { meta, cast, hr, h };
+}
+function drawIntroBits(ctx, b, x, y, alphaMeta, alphaHook) {
+  let yy = y;
+  if (b.meta) { yy += 34; label(ctx, b.meta, x, yy, 28, "rgba(255,255,255,0.85)", "center", alphaMeta); yy += 18; }
+  if (b.cast) { yy += 32; label(ctx, b.cast, x, yy, 24, "rgba(255,255,255,0.7)", "center", alphaMeta, 0.6); yy += 14; }
+  if (b.hr) lines(ctx, b.hr, "body", x, yy + 30, pre().body.lh, "center", "rgba(255,255,255,0.92)", alphaHook);
+}
+
+function drawSpotlight(ctx, t, f, idx, n) {
+  const acc = accentOf(f), list = films(), cx = W / 2, TL = timeline(f), clip = clipOf(f);
+  if (clip) return drawSpotlightClip(ctx, t, f, clip, TL, list, acc);
+  drawBackdrop(ctx, backdrop(f.poster, f.id, acc), 1.04 + 0.05 * (t / TL.L));
+  drawReelTitle(ctx, t, TL, acc);
+  // the film: full size and centred (title, year · director, cast, reel line), then the poster and title
+  // shrink and rise to make room for the reasons underneath
   const F = TL.film, film = Math.min(ease(fade(t, F, 0.55)), 1 - fade(t, TL.filmEnd - 0.35, 0.35));
   if (film > 0) {
     const pw = 640, cd = card(f, pw), maxW = SAFE.right - SAFE.left, gap = 46, avail = SAFE.bottom - SAFE.top;
     const tr = fit(ctx, f.title, "title", maxW, 2, 112, 60), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
-    const hook = (f.reelLine || "").trim(), hr = hook ? fit(ctx, hook, "body", maxW, 2, 54, 40) : null;
-    const hh = hr ? 26 + hr.size * (0.8 + (hr.lines.length - 1) * pre().body.lh) : 0;
-    const hA = cd.h + gap + th + hh, hB = cd.h + gap + th;
-    const rs = reasonsOf(f), PADX = 44, PADT = 40, LABEL = 46, PADB = 34, textW = maxW - PADX * 2 + 20, boxMax = Math.round(avail * 0.46);
-    let rsize = 58, fits = [];
-    for (; rsize >= 32; rsize -= 2) {
-      fits = rs.map(txt => { ctx.font = font("body", rsize); return P.wrapPlain(ctx, txt, textW); });
-      const tallest = Math.max(0, ...fits.map(l => rsize * (0.8 + (l.length - 1) * pre().body.lh) + rsize * 0.3));
-      if (PADT + LABEL + tallest + PADB <= boxMax) break;
-    }
-    const tallest = Math.max(0, ...fits.map(l => rsize * (0.8 + (l.length - 1) * pre().body.lh) + rsize * 0.3));
-    const bh = rs.length ? Math.round(PADT + LABEL + tallest + PADB) : 0, gapB = 44;
-    const sB = Math.min(0.8, (avail - bh - gapB) / hB), stackH = hB * sB + gapB + bh, sA = Math.min(1, avail / hA);
+    const bits = introBits(ctx, f, maxW), hA = cd.h + gap + th + bits.h, hB = cd.h + gap + th;
+    // breathing room between the title and the box: at least 96 px, and spare height goes here first (up to 190)
+    // reason text sits just under the shrunk title's size: size it for a first guess at the shrink, then refit
+    const boxMax = Math.round(avail * 0.44), minGap = 96;
+    let rb = reasonBox(ctx, f, maxW, boxMax, tr.size * 0.8 * 0.8);
+    let sB = Math.min(0.8, (avail - rb.h - minGap) / hB);
+    rb = reasonBox(ctx, f, maxW, boxMax, Math.min(rb.size, tr.size * sB * 0.8));
+    sB = Math.min(0.8, (avail - rb.h - minGap) / hB);
+    const spare = Math.max(0, avail - (hB * sB + minGap + rb.h));
+    const gapB = minGap + Math.min(spare, 94), stackH = hB * sB + gapB + rb.h, sA = Math.min(1, avail / hA);
     const topB = SAFE.top + Math.max(0, (avail - stackH) / 2), topA = MID - hA * sA / 2;
-    const shrink = F + (TL.L === 60 ? 3.2 : 1.8), k = ease(fade(t, shrink, 0.7));
+    const shrink = TL.shrink, k = ease(fade(t, shrink, 0.7));
     const s = sA + (sB - sA) * k, top = topA + (topB - topA) * k, pop = 0.9 + 0.1 * ease(fade(t, F, 0.7));
     ctx.save(); ctx.translate(cx, top); ctx.scale(s * pop, s * pop);
     drawCard(ctx, cd, 0, 0, 1, film);
     lines(ctx, tr, "title", 0, cd.h + gap, pre().title.lh, "center", "#fff", film * fade(t, F + 0.4, 0.35));
-    if (hr) lines(ctx, hr, "body", 0, cd.h + gap + th + 26, pre().body.lh, "center", "rgba(255,255,255,0.9)", film * fade(t, F + 0.7, 0.35) * (1 - k));
-    else label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), 0, cd.h + gap + th + 40, 28, "rgba(255,255,255,0.8)", "center", film * fade(t, F + 0.7, 0.35) * (1 - k));
+    drawIntroBits(ctx, bits, 0, cd.h + gap + th, film * fade(t, F + 0.6, 0.35) * (1 - k), film * fade(t, F + 0.8, 0.35) * (1 - k));
     ctx.restore();
-    const r0 = shrink + 0.6, d = (TL.filmEnd - 0.3 - r0) / Math.max(1, rs.length), boxY = topB + hB * sB + gapB;
-    rs.forEach((txt, i) => {
-      const a = span(t, r0 + i * d, r0 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
-      const by = boxY + (1 - ease(fade(t, r0 + i * d, 0.35))) * 40;
-      ctx.save(); ctx.globalAlpha = a * 0.68; ctx.fillStyle = "#000"; rr(ctx, SAFE.left, by, maxW, bh, 24); ctx.fill();
-      ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, SAFE.left, by, 10, bh, 5); ctx.fill(); ctx.restore();
-      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + PADX, by + PADT + 18, 24, acc, "left", a);
-      lines(ctx, { size: rsize, lines: fits[i] }, "body", SAFE.left + PADX, by + PADT + LABEL, pre().body.lh, "left", "#fff", a);
-    });
+    drawReasons(ctx, t, rb, SAFE.left, topB + hB * sB + gapB, maxW, TL, film, acc, false);
   }
-  // 3. want more?
-  const more = span(t, TL.more, TL.list + 0.2, 0.3);
-  if (more > 0) {
-    const r = fit(ctx, "Want to watch more like this?", "title", SAFE.right - SAFE.left, 3, 140, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    lines(ctx, r, "title", cx, MID - h / 2, pre().title.lh, "center", "#fff", more);
-  }
-  // 4. the whole list lands, then a sweep lifts each poster in turn with its title
-  if (t >= TL.list) {
-    const lay = listLayout(list, f.id), dim = 1 - 0.9 * fade(t, TL.end - 0.1, 0.4);
-    const stagger = Math.min(0.16, 1.8 / list.length), landed = TL.list + 0.2 + stagger * list.length + 0.4;
-    const sweepEnd = TL.end - 0.5, per = (sweepEnd - landed) / list.length;
-    const cur = t >= landed && t < sweepEnd ? Math.floor((t - landed) / per) : -1, cu = cur >= 0 ? (t - landed - cur * per) / per : 0;
-    const lift = cur >= 0 ? Math.min(ease(cu / 0.25), 1 - ease((cu - 0.8) / 0.2)) : 0;
-    const headY = kit.recapStyle === "scatter" ? lay.areaTop - 40 : lay.gy0 - 34; // scattered posters can rise into the grid's header spot
-    label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, headY, 28, acc, "center", fade(t, TL.list, 0.3) * dim);
-    const order = lay.slots.map((sl, i) => ({ ...sl, i })).sort((a, b) => (a.i === cur) - (b.i === cur) || a.z - b.z);
-    for (const sl of order) {
-      const a = ease(fade(t, TL.list + 0.2 + sl.i * stagger, 0.3)); if (a <= 0) continue;
-      const on = sl.i === cur, up = on ? lift : 0, others = cur >= 0 && !on ? 1 - 0.45 * lift : 1;
-      const sc = sl.scale * (0.92 + 0.08 * a) * (1 + 0.16 * up);
-      drawCard(ctx, card(sl.g, lay.tw), sl.x, sl.y + (1 - a) * 40 - up * 20, sc, a * dim * others, sl.tilt * (1 - up), sl.g.id === f.id ? acc : null);
+  drawMore(ctx, t, TL); drawListMoment(ctx, t, TL, list, acc); drawFollow(ctx, t, TL, acc);
+}
+
+// Clip mode: the clip fills the screen. The reel title sits on a blurred freeze of it; the blur clears as the clip
+// plays; the film's title and then the reasons come up at the bottom with shadows (no blur); when it ends, the
+// picture blurs again under the list moment and the follow call.
+function drawSpotlightClip(ctx, t, f, clip, TL, list, acc) {
+  const F = TL.film, blur = t < F + 0.9 ? 1 - fade(t, F, 0.9) : fade(t, TL.filmEnd - 0.7, 0.7);
+  drawClip(ctx, clip.video, blur);
+  drawReelTitle(ctx, t, TL, acc);
+  const film = Math.min(fade(t, F + 0.5, 0.4), 1 - fade(t, TL.filmEnd - 0.5, 0.4));
+  if (film > 0) {
+    // a soft shadow rising from the bottom, so white text reads on any footage
+    const g = ctx.createLinearGradient(0, SAFE.bottom - 760, 0, H);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(0.55, "rgba(0,0,0,0.45)"); g.addColorStop(1, "rgba(0,0,0,0.7)");
+    ctx.save(); ctx.globalAlpha = film; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore();
+    const maxW = SAFE.right - SAFE.left, cx = W / 2, introEnd = TL.reasonsFrom;
+    // the film's title, credits, cast and reel line, sitting on the bottom of the safe area
+    const ia = Math.min(fade(t, F + 0.6, 0.4), 1 - fade(t, introEnd - 0.4, 0.4));
+    if (ia > 0) {
+      const tr = fit(ctx, f.title, "title", maxW, 2, 120, 64), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
+      const bits = introBits(ctx, f, maxW), y = SAFE.bottom - th - bits.h;
+      lines(ctx, tr, "title", cx, y, pre().title.lh, "center", "#fff", ia);
+      ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 24; drawIntroBits(ctx, bits, cx, y + th, ia, ia); ctx.restore();
     }
-    if (cur >= 0 && lift > 0) { // the title under the lifted poster
-      const sl = lay.slots[cur], r = fit(ctx, sl.g.title, "title", SAFE.right - SAFE.left - 60, 2, 64, 40);
-      const lw = Math.min(SAFE.right - SAFE.left, Math.max(...r.lines.map(l => { ctx.font = font("title", r.size); return ctx.measureText(l).width; })) + 70);
-      const lh = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh) + 44;
-      const ly = clamp(sl.y + lay.th * sl.scale * 1.16 - 10, SAFE.top, SAFE.bottom - lh), lx = clamp(sl.x, SAFE.left + lw / 2, SAFE.right - lw / 2);
-      ctx.save(); ctx.globalAlpha = lift * dim * 0.82; ctx.fillStyle = "#000"; rr(ctx, lx - lw / 2, ly, lw, lh, 20); ctx.fill(); ctx.restore();
-      lines(ctx, r, "title", lx, ly + 20, pre().title.lh, "center", "#fff", lift * dim);
-    }
+    const rb = reasonBox(ctx, f, maxW, Math.round((SAFE.bottom - SAFE.top) * 0.34), 50);
+    drawReasons(ctx, t, rb, SAFE.left, SAFE.bottom - rb.h, maxW, TL, film, accentOf(f), true);
   }
-  // 5. follow call
-  const br = ease(fade(t, TL.end, 0.45));
-  if (br > 0) {
-    ctx.save(); ctx.globalAlpha = 0.45 * br; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
-    const r = fit(ctx, "Want more recommendations?", "title", SAFE.right - SAFE.left, 3, 124, 72), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    const y = MID - h / 2 - 60;
-    lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", br);
-    label(ctx, handle() ? "Follow " + handle() : "Follow us", cx, y + h + 96, 38, acc, "center", fade(t, TL.end + 0.3, 0.4), 0.5);
-    label(ctx, "for more lists like this", cx, y + h + 166, 26, "rgba(255,255,255,0.85)", "center", fade(t, TL.end + 0.6, 0.4));
-  }
+  drawMore(ctx, t, TL); drawListMoment(ctx, t, TL, list, acc); drawFollow(ctx, t, TL, acc);
 }
 
 /* ---------------- recap reel (every film, cut to the tempo) ---------------- */
@@ -402,7 +510,8 @@ function assets() {
   spot.forEach((id, k) => {
     const i = list.findIndex(f => f.id === id), f = list[i];
     out.push({ id: "spot:" + id, name: `Spotlight reel · ${f.title}`, day: days[k] ?? 8 + k, file: `${days[k] !== undefined ? "day" + days[k] : "extra"}-spotlight-${P.slug(f.title)}`,
-      kind: "video", seconds: spotLen(), draw: (ctx, t) => drawSpotlight(ctx, t, f, i + 1, n) });
+      kind: "video", seconds: timeline(f).L, still: timeline(f).reasonsFrom + 0.8, draw: (ctx, t) => drawSpotlight(ctx, t, f, i + 1, n),
+      prepare: clipOf(f) ? t => seekTo(clips.get(f.id).video, clipTime(f, t)) : null, clipFor: f });
   });
   out.push({ id: "story-seen", name: "Story · how many have you seen?", day: 2, file: "day2-story-how-many-seen", kind: "image", draw: ctx => drawStorySeen(ctx) });
   out.push({ id: "story-pair", name: "Story · this or that", day: 4, file: "day4-story-this-or-that", kind: "image", draw: ctx => drawStoryPair(ctx) });
@@ -487,12 +596,18 @@ function draw(a, t, frame = 0) {
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
   a.draw(ctx, t, frame);
 }
-function stillTime(a) { return a.id.startsWith("spot:") ? timeline().film + 4.5 : a.id === "recap" ? HOOK + 0.6 : 0; }
-function showCurrent() { const a = assets().find(x => x.id === $("kitAsset").value) || assets()[0]; current = a; if (a && !playing) draw(a, stillTime(a)); $("kitPlay").disabled = !a || a.kind !== "video"; }
+function stillTime(a) { return a.still ?? (a.id === "recap" ? HOOK + 0.6 : 0); }
+function showCurrent() {
+  const a = assets().find(x => x.id === $("kitAsset").value) || assets()[0]; current = a;
+  if (a && !playing) { const t = stillTime(a); draw(a, t); if (a.prepare) a.prepare(t).then(() => { if (!playing && current === a) draw(a, t); }); }
+  $("kitPlay").disabled = !a || a.kind !== "video";
+}
 function loop() {
   raf = 0; if (!playing || !current) return;
   const t = (performance.now() - t0) / 1000;
   if (t > current.seconds) { playing = false; $("kitPlay").textContent = "Play"; draw(current, stillTime(current)); return; }
+  const f = current.clipFor, c = f && clipOf(f);
+  if (c) { const want = clipTime(f, t); if (Math.abs(c.video.currentTime - want) > 0.08) c.video.currentTime = want; }
   draw(current, t, Math.floor(t * FPS)); raf = requestAnimationFrame(loop);
 }
 $("kitPlay").addEventListener("click", () => {
@@ -556,7 +671,7 @@ async function exportKit() {
       const a = all[k], step = `${k + 1}/${all.length}`;
       if (a.kind === "video") {
         const frames = Math.round(a.seconds * FPS);
-        const blob = await C.encodeVideo(W, H, frames, (ctx, i) => { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
+        const blob = await C.encodeVideo(W, H, frames, async (ctx, i) => { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
           f => { status.textContent = `${step} · ${a.name} · ${Math.round(f * 100)}%`; });
         files.push({ name: a.file + ".mp4", data: new Uint8Array(await blob.arrayBuffer()) });
       } else {
@@ -584,6 +699,34 @@ async function exportKit() {
 }
 $("kitExport").addEventListener("click", exportKit);
 
+/* ---------------- clip controls (Words panel, current slide) ---------------- */
+function syncClipUI() {
+  const id = P.currentSlideId(), c = id && clips.get(id), info2 = $("clipInfo"); if (!info2) return;
+  const has = !!(c && c.ready);
+  $("clipClear").hidden = !has; $("clipStartRow").hidden = !has;
+  if (has) {
+    const st = clipStart(id); $("clipStart").max = Math.max(0, Math.floor(c.dur * 10) / 10 - 1); $("clipStart").value = st;
+    $("clipStartOut").textContent = `${st.toFixed(1)} s`;
+    info2.textContent = `Clip: ${c.dur.toFixed(1)} s long. It plays full-screen in this film's spotlight reel.`;
+  } else info2.textContent = c ? "Loading the clip…" : "No clip. The reel uses the poster.";
+}
+$("clipFile").addEventListener("change", async e => {
+  const file = e.target.files[0]; e.target.value = ""; const id = P.currentSlideId(); if (!file || !id) return;
+  if (!file.type.startsWith("video/")) { P.toast("That isn't a video file. Try an MP4 or MOV."); return; }
+  attachClip(id, file); await P.idbPut("clip:" + id, file); syncClipUI();
+  P.toast("Clip added. It's kept in this browser, not in the project file.");
+});
+$("clipClear").addEventListener("click", async () => {
+  const id = P.currentSlideId(), c = clips.get(id); if (!c) return;
+  c.video.removeAttribute("src"); URL.revokeObjectURL(c.url); clips.delete(id); await P.idbPut("clip:" + id, null);
+  if (kit.clipStart) delete kit.clipStart[id]; save(); syncClipUI(); soon();
+});
+$("clipStart").addEventListener("input", e => {
+  const id = P.currentSlideId(); kit.clipStart = { ...(kit.clipStart || {}), [id]: +e.target.value }; save();
+  $("clipStartOut").textContent = `${(+e.target.value).toFixed(1)} s`; soon();
+});
+P.onDeckChange(() => { films().forEach(f => loadClip(f.id)); setTimeout(syncClipUI, 50); });
+
 window.Kit = { flush, hold: () => clearTimeout(saveT), refresh, assets, captions, letterboxd };
-setTimeout(refresh, 600);
+setTimeout(() => { films().forEach(f => loadClip(f.id)); refresh(); syncClipUI(); }, 600);
 })();

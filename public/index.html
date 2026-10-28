@@ -162,6 +162,13 @@
             <div class="field"><label for="reelLine">Reel line <span>4–8 words, the hook</span></label><input type="text" id="reelLine" data-k="reelLine" placeholder="His life is the show."></div>
             <div class="field"><label for="reasons">Three quick reasons <span>one per line</span></label><textarea id="reasons" data-k="reasons" rows="3" placeholder="Jim Carrey's best performance&#10;Predicted reality TV by years&#10;That ending"></textarea></div>
             <div class="field"><label for="trivia">Trivia <span>for the "guess the film" story</span></label><input type="text" id="trivia" data-k="trivia" placeholder="Which film was shot as one 37-minute take?"></div>
+            <div class="field kit-clip">
+              <span class="lbl">Clip <span>optional · plays full-screen in this film's spotlight reel</span></span>
+              <div class="uploader"><label class="btn small" for="clipFile">Add a clip</label><button class="btn small" id="clipClear" type="button">Remove clip</button></div>
+              <input type="file" id="clipFile" accept="video/*" hidden>
+              <div class="field" id="clipStartRow" hidden><label for="clipStart">Start the clip at <output id="clipStartOut"></output></label><input type="range" id="clipStart" min="0" max="10" step="0.1" value="0"></div>
+              <span class="hint" id="clipInfo">No clip. The reel uses the poster.</span>
+            </div>
           </div>
           <div class="field"><label for="handle">Handle</label><input type="text" id="handle" data-k="handle"></div>
           <div class="toggles">
@@ -233,7 +240,7 @@
           <div class="field"><label for="kitReelTitle">Reel title <span>opens every spotlight reel</span></label><input type="text" id="kitReelTitle" placeholder="Movies about television"></div>
           <div class="field"><span class="lbl">Spotlight reels <span>one reel per starred film</span></span><div class="kit-films" id="kitFilms"></div></div>
           <div class="field"><span class="lbl">Spotlight length</span><div class="seg" id="kitSpotLength">
-            <button type="button" data-v="30">30 s<small>quick, punchy</small></button><button type="button" data-v="60">1 min<small>slower, more time on the list</small></button>
+            <button type="button" data-v="30">Quick<small>up to 30 s</small></button><button type="button" data-v="60">Long<small>up to 1 min</small></button>
           </div></div>
           <div class="field"><span class="lbl">The list moment</span><div class="seg" id="kitRecapStyle">
             <button type="button" data-v="grid">Grid<small>tidy</small></button><button type="button" data-v="scatter">Scatter<small>tossed on a table</small></button>

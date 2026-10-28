@@ -1238,6 +1238,6 @@ window.PCS = {
   RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
   get state() { return state; }, preset: P, deckPosters, deckSlides, deckCount: () => deck.length,
   drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
-  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(), deckData, makeZip, onDeckChange: fn => deckListeners.push(fn),
+  extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(), deckData, makeZip, onDeckChange: fn => deckListeners.push(fn), currentSlideId: () => deck[cur]?.id,
 };
 })();

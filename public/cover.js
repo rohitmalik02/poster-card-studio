@@ -473,7 +473,7 @@ async function encodeVideo(width, height, frames, draw, onProgress = () => {}) {
   try {
     for (let i = 0; i < frames; i++) {
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; ctx.filter = "none";
-      draw(ctx, i);
+      await draw(ctx, i); // may be async: video frames need a seek first
       enc.encodeRGB(ctx.getImageData(0, 0, width, height).data);
       onProgress((i + 1) / frames);
       if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));
