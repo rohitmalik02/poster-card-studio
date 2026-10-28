@@ -17,8 +17,10 @@ const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
 
 const W = 1080, H = 1920, FPS = C.FPS || 30, SPOT = 21;
 // Reels safe area: Instagram's header covers the top, caption/audio the bottom ~380 px, buttons the right edge.
-const SAFE = { top: 210, bottom: H - 400, left: 110, right: W - 110 }; // equal side margins keep things on the centre line
-const MID = H * 0.47; // optical middle for full-screen text cards: a touch above centre, clear of the caption
+// Reels safe area (no official spec; between Meta's ad guidance and the common 1080x1420 rule): clear of the header
+// (top 250), the caption, audio and username (bottom 420) and the like/comment/share column (equal 130 side margins).
+const SAFE = { top: 250, bottom: H - 420, left: 130, right: W - 130 };
+const MID = (SAFE.top + SAFE.bottom) / 2; // full-screen text cards centre in the safe area
 const reelTitle = () => (kit.reelTitle || "").trim() || info().title || "Our latest list";
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const ease = x => 1 - Math.pow(1 - clamp(x), 3);
@@ -154,35 +156,45 @@ function drawSpotlight(ctx, t, f, idx, n) {
     label(ctx, info().kicker, cx, y - 70, 34, acc, "center", ti);
     lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", ti);
   }
-  // 2. the film: poster, title and reel line start full size and centred, then shrink together and rise
-  //    above the centre line to make room for the reasons underneath
+  // 2. the film: poster, title and reel line start full size and centred, then shrink together and rise to
+  //    make room for the reasons. The reasons box is sized for the longest reason; the poster takes what's left.
   const film = Math.min(ease(fade(t, 2.2, 0.55)), 1 - fade(t, 12.25, 0.35));
   if (film > 0) {
-    const pw = 640, cd = card(f, pw), maxW = SAFE.right - SAFE.left, gap = 46;
+    const pw = 640, cd = card(f, pw), maxW = SAFE.right - SAFE.left, gap = 46, avail = SAFE.bottom - SAFE.top;
     const tr = fit(ctx, f.title, "title", maxW, 2, 112, 60), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
     const hook = (f.reelLine || "").trim(), hr = hook ? fit(ctx, hook, "body", maxW, 2, 54, 40) : null;
     const hh = hr ? 26 + hr.size * (0.8 + (hr.lines.length - 1) * pre().body.lh) : 0;
-    const hA = cd.h + gap + th + hh, hB = cd.h + gap + th, sB = 0.56;
-    const k = ease(fade(t, 4.0, 0.7)); // 0 = full size and centred, 1 = small and up top
-    const s = 1 + (sB - 1) * k, top = (MID - hA / 2) + ((SAFE.top + 10) - (MID - hA / 2)) * k;
-    const pop = 0.9 + 0.1 * ease(fade(t, 2.2, 0.7));
+    const hA = cd.h + gap + th + hh, hB = cd.h + gap + th;
+    // reasons: one font size and one box height for all of them, so nothing jumps or spills
+    const rs = reasonsOf(f), PADX = 44, PADT = 40, LABEL = 46, PADB = 34, textW = maxW - PADX * 2 + 20;
+    const boxMax = Math.round(avail * 0.46);
+    let rsize = 58, fits = [];
+    for (; rsize >= 32; rsize -= 2) {
+      fits = rs.map(txt => { ctx.font = font("body", rsize); return P.wrapPlain(ctx, txt, textW); });
+      const tallest = Math.max(0, ...fits.map(l => rsize * (0.8 + (l.length - 1) * pre().body.lh) + rsize * 0.3));
+      if (PADT + LABEL + tallest + PADB <= boxMax) break;
+    }
+    const tallest = Math.max(0, ...fits.map(l => rsize * (0.8 + (l.length - 1) * pre().body.lh) + rsize * 0.3));
+    const bh = rs.length ? Math.round(PADT + LABEL + tallest + PADB) : 0, gapB = 44;
+    const sB = Math.min(0.8, (avail - bh - gapB) / hB), stackH = hB * sB + gapB + bh;
+    const sA = Math.min(1, avail / hA); // the opening, full-size group also stays inside the safe area
+    const topB = SAFE.top + Math.max(0, (avail - stackH) / 2), topA = MID - hA * sA / 2;
+    const k = ease(fade(t, 4.0, 0.7)); // 0 = full size and centred, 1 = smaller and up top
+    const s = sA + (sB - sA) * k, top = topA + (topB - topA) * k, pop = 0.9 + 0.1 * ease(fade(t, 2.2, 0.7));
     ctx.save(); ctx.translate(cx, top); ctx.scale(s * pop, s * pop);
     drawCard(ctx, cd, 0, 0, 1, film);
     lines(ctx, tr, "title", 0, cd.h + gap, pre().title.lh, "center", "#fff", film * fade(t, 2.6, 0.35));
     if (hr) lines(ctx, hr, "body", 0, cd.h + gap + th + 26, pre().body.lh, "center", "rgba(255,255,255,0.9)", film * fade(t, 2.9, 0.35) * (1 - k));
     else label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), 0, cd.h + gap + th + 40, 28, "rgba(255,255,255,0.8)", "center", film * fade(t, 2.9, 0.35) * (1 - k));
     ctx.restore();
-    // reasons rise into the space the shrink opened up
-    const below = SAFE.top + 10 + hB * sB + 50;
-    const rs = reasonsOf(f), d = 7.6 / Math.max(1, rs.length);
+    const boxY = topB + hB * sB + gapB, d = 7.6 / Math.max(1, rs.length);
     rs.forEach((txt, i) => {
       const a = span(t, 4.6 + i * d, 4.6 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
-      const r = fit(ctx, txt, "body", maxW - 90, 5, 62, 40), rh = r.size * (0.8 + (r.lines.length - 1) * pre().body.lh);
-      const bh = Math.min(rh + 120, SAFE.bottom - below), by = below + (1 - ease(fade(t, 4.6 + i * d, 0.35))) * 50;
-      ctx.save(); ctx.globalAlpha = a * 0.66; ctx.fillStyle = "#000"; rr(ctx, SAFE.left - 20, by, maxW + 40, bh, 26); ctx.fill();
-      ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, SAFE.left - 20, by, 10, bh, 5); ctx.fill(); ctx.restore();
-      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + 30, by + 48, 26, acc, "left", a);
-      lines(ctx, r, "body", SAFE.left + 30, by + 72, pre().body.lh, "left", "#fff", a);
+      const by = boxY + (1 - ease(fade(t, 4.6 + i * d, 0.35))) * 40;
+      ctx.save(); ctx.globalAlpha = a * 0.68; ctx.fillStyle = "#000"; rr(ctx, SAFE.left, by, maxW, bh, 24); ctx.fill();
+      ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, SAFE.left, by, 10, bh, 5); ctx.fill(); ctx.restore();
+      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + PADX, by + PADT + 18, 24, acc, "left", a);
+      lines(ctx, { size: rsize, lines: fits[i] }, "body", SAFE.left + PADX, by + PADT + LABEL, pre().body.lh, "left", "#fff", a);
     });
   }
   // 3. want more?
@@ -191,18 +203,26 @@ function drawSpotlight(ctx, t, f, idx, n) {
     const r = fit(ctx, "Want to watch more like this?", "title", SAFE.right - SAFE.left, 3, 140, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
     lines(ctx, r, "title", cx, MID - h / 2, pre().title.lh, "center", "#fff", more);
   }
-  // 4. the whole list drops into a grid, and stays dimmed behind the bridge
+  // 4. the whole list drops into a grid, and stays dimmed behind the bridge. The column count is whichever
+  //    gives the biggest posters for this many films inside the safe area; the grid and its last row are centred.
   if (t >= 14.3) {
-    const cols = list.length > 12 ? 5 : list.length > 6 ? 4 : 3, rows = Math.ceil(list.length / cols), gap = 18;
-    const gridTop = SAFE.top + 120, gridW = SAFE.right - SAFE.left, availH = SAFE.bottom - gridTop - 20;
-    const tw = Math.floor(Math.min((gridW - gap * (cols - 1)) / cols, (availH - gap * (rows - 1)) / rows / 1.5));
-    const x0 = cx - (cols * tw + (cols - 1) * gap) / 2, dim = 1 - 0.9 * fade(t, 18.3, 0.4);
-    label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, SAFE.top + 60, 28, acc, "center", fade(t, 14.3, 0.3) * dim);
+    const gap = 20, head = 80, areaTop = SAFE.top + head, areaW = SAFE.right - SAFE.left, areaH = SAFE.bottom - areaTop;
+    let best = null;
+    for (let cols = 2; cols <= 5; cols++) {
+      const rows = Math.ceil(list.length / cols);
+      const tw = Math.floor(Math.min((areaW - gap * (cols - 1)) / cols, (areaH - gap * (rows - 1)) / rows / 1.5));
+      if (!best || tw > best.tw) best = { cols, rows, tw };
+    }
+    const { cols, rows, tw } = best, th = tw * 1.5, gridH = rows * th + (rows - 1) * gap;
+    const gy0 = areaTop + (areaH - gridH) / 2, dim = 1 - 0.9 * fade(t, 18.3, 0.4);
+    label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, gy0 - 34, 28, acc, "center", fade(t, 14.3, 0.3) * dim);
     list.forEach((g, i) => {
       const a = ease(fade(t, 14.4 + i * 0.14, 0.3)); if (a <= 0) return;
-      const gx = x0 + (i % cols) * (tw + gap) + tw / 2, gy = gridTop + Math.floor(i / cols) * (tw * 1.5 + gap);
+      const row = Math.floor(i / cols), inRow = row === rows - 1 ? list.length - row * cols : cols;
+      const rowW = inRow * tw + (inRow - 1) * gap, col = i - row * cols;
+      const gx = cx - rowW / 2 + col * (tw + gap) + tw / 2, gy = gy0 + row * (th + gap);
       drawCard(ctx, card(g, tw), gx, gy + (1 - a) * 40, 0.92 + 0.08 * a, a * dim);
-      if (g.id === f.id) { ctx.save(); ctx.globalAlpha = a * dim; ctx.strokeStyle = acc; ctx.lineWidth = 8; rr(ctx, gx - tw / 2 - 6, gy - 6, tw + 12, tw * 1.5 + 12, 12); ctx.stroke(); ctx.restore(); }
+      if (g.id === f.id) { ctx.save(); ctx.globalAlpha = a * dim; ctx.strokeStyle = acc; ctx.lineWidth = 8; rr(ctx, gx - tw / 2 - 6, gy - 6, tw + 12, th + 12, 12); ctx.stroke(); ctx.restore(); }
     });
   }
   // 5. where the full list lives
