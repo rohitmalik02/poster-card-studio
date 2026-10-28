@@ -688,8 +688,40 @@ document.querySelectorAll("[data-k]").forEach(el => el.addEventListener("input",
 $("kitPanel").addEventListener("toggle", () => { if ($("kitPanel").open) refresh(); });
 
 /* ---------------- export ---------------- */
+// Render one asset to a file: { name, blob }. `say` reports progress.
+async function renderAsset(a, say) {
+  if (a.kind === "video") {
+    const frames = Math.round(a.seconds * FPS);
+    let out = await C.encodeVideo(W, H, frames, async (ctx, i) => { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
+      f => say(`${Math.round(f * 100)}%`));
+    if (a.clipFor && clipOf(a.clipFor) && keepSound(a.clipFor.id)) {
+      say("adding the clip's sound");
+      try { out = await withClipSound(out, a.clipFor, a.seconds); }
+      catch (e) { console.error(e); P.toast(`${a.clipFor.title}: saved without sound (${e.message || e}).`); }
+    }
+    return { name: a.file + ".mp4", blob: out };
+  }
+  say("");
+  const c = document.createElement("canvas"); c.width = W; c.height = H; const ctx = c.getContext("2d");
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, 0, 0);
+  return { name: a.file + ".png", blob: await new Promise(r => c.toBlob(r, "image/png")) };
+}
+function download(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+}
+// Just the asset in the preview, as a single file.
+async function exportOne() {
+  const a = assets().find(x => x.id === $("kitAsset").value); if (!a) return;
+  const btns = [$("kitExport"), $("kitExportOne")], status = $("kitStatus"); btns.forEach(b => (b.disabled = true)); playing = false;
+  try {
+    const r = await renderAsset(a, m => { status.textContent = `${a.name}${m ? " · " + m : ""}`; });
+    download(r.blob, r.name); status.textContent = `Saved ${r.name} (${(r.blob.size / 1048576).toFixed(1)} MB).`;
+  } catch (e) { console.error(e); status.textContent = `Export failed: ${e?.message || e}`; }
+  btns.forEach(b => (b.disabled = false));
+}
 async function exportKit() {
-  const btn = $("kitExport"), status = $("kitStatus"); btn.disabled = true; playing = false;
+  const btn = $("kitExport"), status = $("kitStatus"); btn.disabled = true; $("kitExportOne").disabled = true; playing = false;
   const files = [], list = films(), enc = new TextEncoder();
   if (!list.length) { status.textContent = "Add some films first."; btn.disabled = false; return; }
   bgCache.clear(); cardCache.clear(); coverCache = null;
@@ -697,41 +729,24 @@ async function exportKit() {
   try {
     for (let k = 0; k < all.length; k++) {
       const a = all[k], step = `${k + 1}/${all.length}`;
-      if (a.kind === "video") {
-        const frames = Math.round(a.seconds * FPS);
-        const blob = await C.encodeVideo(W, H, frames, async (ctx, i) => { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
-          f => { status.textContent = `${step} · ${a.name} · ${Math.round(f * 100)}%`; });
-        let out = blob;
-        if (a.clipFor && clipOf(a.clipFor) && keepSound(a.clipFor.id)) {
-          status.textContent = `${step} · ${a.name} · adding the clip's sound`;
-          try { out = await withClipSound(blob, a.clipFor, a.seconds); }
-          catch (e) { console.error(e); P.toast(`${a.clipFor.title}: saved without sound (${e.message || e}).`); }
-        }
-        files.push({ name: a.file + ".mp4", data: new Uint8Array(await out.arrayBuffer()) });
-      } else {
-        status.textContent = `${step} · ${a.name}`;
-        const c = document.createElement("canvas"); c.width = W; c.height = H; const ctx = c.getContext("2d");
-        ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, 0, 0);
-        const blob = await new Promise(r => c.toBlob(r, "image/png"));
-        files.push({ name: a.file + ".png", data: new Uint8Array(await blob.arrayBuffer()) });
-        await new Promise(r => setTimeout(r, 0));
-      }
+      const r = await renderAsset(a, m => { status.textContent = `${step} · ${a.name}${m ? " · " + m : ""}`; });
+      files.push({ name: r.name, data: new Uint8Array(await r.blob.arrayBuffer()) });
+      await new Promise(res => setTimeout(res, 0));
       made.push({ day: a.day, name: files[files.length - 1].name });
     }
     files.push({ name: "captions.txt", data: enc.encode(captions(list)) });
     files.push({ name: "letterboxd.csv", data: enc.encode(letterboxd(list)) });
     files.push({ name: "PLAN.txt", data: enc.encode(plan(made)) });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(P.makeZip(files));
-    a.download = `${P.slug([info().kicker, info().title].filter(Boolean).join(" ") || "list")}-kit.zip`;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+    download(P.makeZip(files), `${P.slug([info().kicker, info().title].filter(Boolean).join(" ") || "list")}-kit.zip`);
     const mb = files.reduce((s, f) => s + f.data.length, 0) / 1048576;
     status.textContent = `Kit saved: ${files.length} files, ${mb.toFixed(1)} MB.`;
   } catch (e) {
     console.error(e); status.textContent = `Kit export failed: ${e?.message || e}`;
   }
-  btn.disabled = false;
+  btn.disabled = false; $("kitExportOne").disabled = false;
 }
 $("kitExport").addEventListener("click", exportKit);
+$("kitExportOne").addEventListener("click", exportOne);
 
 /* ---------------- clip sound: decoded, laid under the clip's part of the reel, AAC, packaged with the video ---------------- */
 const keepSound = id => ((kit.clipAudio || {})[id] ?? true) !== false;
