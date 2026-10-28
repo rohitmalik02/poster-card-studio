@@ -154,32 +154,35 @@ function drawSpotlight(ctx, t, f, idx, n) {
     label(ctx, info().kicker, cx, y - 70, 34, acc, "center", ti);
     lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", ti);
   }
-  // 2. the film
+  // 2. the film: poster, title and reel line start full size and centred, then shrink together and rise
+  //    above the centre line to make room for the reasons underneath
   const film = Math.min(ease(fade(t, 2.2, 0.55)), 1 - fade(t, 12.25, 0.35));
   if (film > 0) {
-    const cd = card(f, 600), top = SAFE.top + 30, below = top + cd.h + 60;
-    drawCard(ctx, cd, cx, top, 0.9 + 0.1 * ease(fade(t, 2.2, 0.7)), film);
-    // title and reel line under the poster, until the reasons take the space
-    const intro = film * (1 - fade(t, 3.9, 0.35));
-    if (intro > 0) {
-      const tr = fit(ctx, f.title, "title", SAFE.right - SAFE.left, 2, 110, 60);
-      const h = lines(ctx, tr, "title", cx, below, pre().title.lh, "center", "#fff", intro * fade(t, 2.6, 0.35));
-      const hook = (f.reelLine || "").trim();
-      if (hook) { const hr = fit(ctx, hook, "body", SAFE.right - SAFE.left, 2, 54, 40); lines(ctx, hr, "body", cx, below + h + 24, pre().body.lh, "center", "rgba(255,255,255,0.9)", intro * fade(t, 2.9, 0.35)); }
-      else label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), cx, below + h + 50, 28, "rgba(255,255,255,0.8)", "center", intro * fade(t, 2.9, 0.35));
-    }
-    // reasons, one at a time, in the space under the poster; the title moves to a label above it
-    const later = film * fade(t, 4.0, 0.35);
-    if (later > 0) label(ctx, [f.title, f.year].filter(Boolean).join("  ·  "), cx, top - 40, 28, "#fff", "center", later);
-    const rs = reasonsOf(f), d = 8.2 / Math.max(1, rs.length);
+    const pw = 640, cd = card(f, pw), maxW = SAFE.right - SAFE.left, gap = 46;
+    const tr = fit(ctx, f.title, "title", maxW, 2, 112, 60), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
+    const hook = (f.reelLine || "").trim(), hr = hook ? fit(ctx, hook, "body", maxW, 2, 54, 40) : null;
+    const hh = hr ? 26 + hr.size * (0.8 + (hr.lines.length - 1) * pre().body.lh) : 0;
+    const hA = cd.h + gap + th + hh, hB = cd.h + gap + th, sB = 0.56;
+    const k = ease(fade(t, 4.0, 0.7)); // 0 = full size and centred, 1 = small and up top
+    const s = 1 + (sB - 1) * k, top = (MID - hA / 2) + ((SAFE.top + 10) - (MID - hA / 2)) * k;
+    const pop = 0.9 + 0.1 * ease(fade(t, 2.2, 0.7));
+    ctx.save(); ctx.translate(cx, top); ctx.scale(s * pop, s * pop);
+    drawCard(ctx, cd, 0, 0, 1, film);
+    lines(ctx, tr, "title", 0, cd.h + gap, pre().title.lh, "center", "#fff", film * fade(t, 2.6, 0.35));
+    if (hr) lines(ctx, hr, "body", 0, cd.h + gap + th + 26, pre().body.lh, "center", "rgba(255,255,255,0.9)", film * fade(t, 2.9, 0.35) * (1 - k));
+    else label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), 0, cd.h + gap + th + 40, 28, "rgba(255,255,255,0.8)", "center", film * fade(t, 2.9, 0.35) * (1 - k));
+    ctx.restore();
+    // reasons rise into the space the shrink opened up
+    const below = SAFE.top + 10 + hB * sB + 50;
+    const rs = reasonsOf(f), d = 7.6 / Math.max(1, rs.length);
     rs.forEach((txt, i) => {
-      const a = span(t, 4.2 + i * d, 4.2 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
-      const r = fit(ctx, txt, "body", SAFE.right - SAFE.left - 90, 4, 56, 38), th = r.size * (0.8 + (r.lines.length - 1) * pre().body.lh);
-      const bh = Math.min(th + 110, SAFE.bottom - below + 10), by = below - 10;
-      ctx.save(); ctx.globalAlpha = a * 0.66; ctx.fillStyle = "#000"; rr(ctx, SAFE.left - 20, by, SAFE.right - SAFE.left + 40, bh, 26); ctx.fill();
+      const a = span(t, 4.6 + i * d, 4.6 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
+      const r = fit(ctx, txt, "body", maxW - 90, 5, 62, 40), rh = r.size * (0.8 + (r.lines.length - 1) * pre().body.lh);
+      const bh = Math.min(rh + 120, SAFE.bottom - below), by = below + (1 - ease(fade(t, 4.6 + i * d, 0.35))) * 50;
+      ctx.save(); ctx.globalAlpha = a * 0.66; ctx.fillStyle = "#000"; rr(ctx, SAFE.left - 20, by, maxW + 40, bh, 26); ctx.fill();
       ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, SAFE.left - 20, by, 10, bh, 5); ctx.fill(); ctx.restore();
-      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + 30, by + 44, 24, acc, "left", a);
-      lines(ctx, r, "body", SAFE.left + 30, by + 66, pre().body.lh, "left", "#fff", a);
+      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + 30, by + 48, 26, acc, "left", a);
+      lines(ctx, r, "body", SAFE.left + 30, by + 72, pre().body.lh, "left", "#fff", a);
     });
   }
   // 3. want more?
