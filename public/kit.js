@@ -17,7 +17,8 @@ const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
 
 const W = 1080, H = 1920, FPS = C.FPS || 30, SPOT = 21;
 // Reels safe area: Instagram's header covers the top, caption/audio the bottom ~380 px, buttons the right edge.
-const SAFE = { top: 210, bottom: H - 400, left: 90, right: W - 150 };
+const SAFE = { top: 210, bottom: H - 400, left: 110, right: W - 110 }; // equal side margins keep things on the centre line
+const MID = H * 0.47; // optical middle for full-screen text cards: a touch above centre, clear of the caption
 const reelTitle = () => (kit.reelTitle || "").trim() || info().title || "Our latest list";
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const ease = x => 1 - Math.pow(1 - clamp(x), 3);
@@ -143,13 +144,13 @@ function staticNoise(ctx, seed, alpha) {
    0-2.2 reel title · 2.2-12.6 the film (poster, title and reel line, then three reasons) ·
    12.6-14.4 "want to watch more like this?" · 14.4-18.4 every poster drops into a grid · 18.4-21 where the full list is */
 function drawSpotlight(ctx, t, f, idx, n) {
-  const acc = accentOf(f), list = films(), cx = (SAFE.left + SAFE.right) / 2;
+  const acc = accentOf(f), list = films(), cx = W / 2;
   drawBackdrop(ctx, backdrop(f.poster, f.id, acc), 1.04 + 0.05 * (t / SPOT));
   // 1. the reel's title
   const ti = span(t, 0.1, 2.3, 0.35);
   if (ti > 0) {
     const r = fit(ctx, reelTitle(), "title", SAFE.right - SAFE.left, 4, 150, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    const y = (SAFE.top + SAFE.bottom) / 2 - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
+    const y = MID - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
     label(ctx, info().kicker, cx, y - 70, 34, acc, "center", ti);
     lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", ti);
   }
@@ -185,7 +186,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
   const more = span(t, 12.6, 14.5, 0.3);
   if (more > 0) {
     const r = fit(ctx, "Want to watch more like this?", "title", SAFE.right - SAFE.left, 3, 140, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    lines(ctx, r, "title", cx, (SAFE.top + SAFE.bottom) / 2 - h / 2, pre().title.lh, "center", "#fff", more);
+    lines(ctx, r, "title", cx, MID - h / 2, pre().title.lh, "center", "#fff", more);
   }
   // 4. the whole list drops into a grid, and stays dimmed behind the bridge
   if (t >= 14.3) {
@@ -206,7 +207,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
   if (br > 0) {
     ctx.save(); ctx.globalAlpha = 0.45 * br; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
     const r = fit(ctx, "The full list is pinned on our profile", "title", SAFE.right - SAFE.left, 3, 120, 70), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    const y = (SAFE.top + SAFE.bottom) / 2 - h / 2 - 60;
+    const y = MID - h / 2 - 60;
     lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", br);
     label(ctx, handle(), cx, y + h + 90, 36, acc, "center", br);
     label(ctx, "Tap our name to see all " + list.length, cx, y + h + 160, 26, "rgba(255,255,255,0.85)", "center", fade(t, 18.9, 0.4));
