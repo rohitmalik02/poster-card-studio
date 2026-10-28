@@ -166,7 +166,16 @@
               <span class="lbl">Clip <span>optional · plays full-screen in this film's spotlight reel</span></span>
               <div class="uploader"><label class="btn small" for="clipFile">Add a clip</label><button class="btn small" id="clipClear" type="button">Remove clip</button></div>
               <input type="file" id="clipFile" accept="video/*" hidden>
-              <div class="field" id="clipStartRow" hidden><label for="clipStart">Start the clip at <output id="clipStartOut"></output></label><input type="range" id="clipStart" min="0" max="10" step="0.1" value="0"></div>
+              <div class="clip-trim" id="clipStartRow" hidden>
+                <div class="clip-phone" id="clipPhone" title="Drag to frame the clip"><video id="clipPreview" muted playsinline preload="auto"></video><span>drag to frame</span></div>
+                <div class="clip-trim-ctl">
+                  <div class="field"><label for="clipStart">Start <output id="clipStartOut"></output></label><input type="range" id="clipStart" min="0" max="10" step="0.1" value="0"></div>
+                  <div class="field"><label for="clipEnd">End <output id="clipEndOut"></output></label><input type="range" id="clipEnd" min="0" max="10" step="0.1" value="10"></div>
+                  <div class="field"><label for="clipX">Left to right <output id="clipXOut"></output></label><input type="range" id="clipX" min="0" max="1" step="0.01" value="0.5"></div>
+                  <div class="field"><label for="clipY">Top to bottom <output id="clipYOut"></output></label><input type="range" id="clipY" min="0" max="1" step="0.01" value="0.5"></div>
+                  <div class="field"><label for="clipZoom">Zoom <output id="clipZoomOut"></output></label><input type="range" id="clipZoom" min="1" max="2.5" step="0.01" value="1"></div>
+                </div>
+              </div>
               <span class="hint" id="clipInfo">No clip. The reel uses the poster.</span>
             </div>
           </div>

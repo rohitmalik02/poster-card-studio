@@ -162,6 +162,15 @@ function timeline(f) {
     reasons = reasons.map(r => Math.max(1.5, r * k));
     const over = fixed() + sum(reasons) - cap; if (over > 0) d.list = Math.max(2 + n * 0.5, d.list - over);
   }
+  const c = f && clipOf(f);
+  if (c && reasons.length) {
+    // the film section lasts as long as the trimmed clip, but no shorter than the words need (the clip loops then)
+    // and no longer than the cap allows (the clip is cut off then); the reasons share the time by word count
+    const need = d.intro + 0.9 + reasons.length * 1.5, room = cap - (d.title + d.more + d.list + d.follow);
+    const filmLen = clamp(clipRange(f.id).len, need, Math.max(need, room));
+    const total = filmLen - d.intro - 0.9, w = words.map(x => x + 3), ws = sum(w);
+    reasons = w.map(x => total * x / ws);
+  }
   const film = d.title - 0.2, shrink = film + d.intro, reasonsFrom = shrink + 0.6;
   const filmEnd = reasonsFrom + sum(reasons) + 0.3, more = filmEnd + 0.35, list = more + d.more - 0.2, end = list + d.list;
   return { L: Math.min(cap, end + d.follow), title: d.title, film, shrink, reasonsFrom, reasonDur: reasons, filmEnd, more, list, end };
@@ -207,9 +216,24 @@ function attachClip(id, blob) {
 async function loadClip(id) { if (clips.has(id)) return; const b = await P.idbGet("clip:" + id); if (b) attachClip(id, b); }
 const clipOf = f => { const c = clips.get(f.id); return c && c.ready ? c : null; };
 const clipStart = id => +((kit.clipStart || {})[id] || 0);
+const clipFrame = id => ({ x: 0.5, y: 0.5, z: 1, ...((kit.clipFrame || {})[id] || {}) });
+// Where the clip sits in a w × h frame: cover-fitted, zoomed, and shifted by the framing (x, y 0..1)
+function clipRect(v, w, h, fr) {
+  const vw = v.videoWidth || 16, vh = v.videoHeight || 9, s = Math.max(w / vw, h / vh) * fr.z, dw = vw * s, dh = vh * s;
+  return { x: (w - dw) * fr.x, y: (h - dh) * fr.y, w: dw, h: dh };
+}
+// The trimmed part of a clip: start..end (end defaults to the clip's end), at least half a second long
+function clipRange(id) {
+  const c = clips.get(id), dur = c ? c.dur : 0, st = clamp(clipStart(id), 0, Math.max(0, dur - 0.5));
+  const en = clamp(+((kit.clipEnd || {})[id] ?? dur) || dur, st + 0.5, dur);
+  return { start: st, end: en, len: Math.max(0.5, en - st), dur };
+}
+// Clip time for reel time t: plays the trimmed part from the start of the film section, looping if the section
+// runs longer than the trim (so a short clip never freezes)
 function clipTime(f, t) {
   const c = clipOf(f), TL = timeline(f); if (!c) return 0;
-  return Math.min(clipStart(f.id) + clamp(t - TL.film, 0, TL.filmEnd - TL.film), Math.max(0, c.dur - 0.05));
+  const r = clipRange(f.id), local = clamp(t - TL.film, 0, TL.filmEnd - TL.film);
+  return Math.min(r.start + (local % r.len), Math.max(0, c.dur - 0.05));
 }
 function seekTo(v, time) {
   if (Math.abs(v.currentTime - time) < 0.01) return Promise.resolve();
@@ -218,13 +242,12 @@ function seekTo(v, time) {
 }
 // The clip, cover-fitted to the frame; `blur` 0..1 mixes in a soft version (drawn small and scaled up, which is cheap)
 const blurBuf = document.createElement("canvas"); blurBuf.width = 270; blurBuf.height = 480;
-function drawClip(ctx, v, blur = 0) {
-  const vw = v.videoWidth || 16, vh = v.videoHeight || 9, s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
-  ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+function drawClip(ctx, v, blur = 0, fr = { x: 0.5, y: 0.5, z: 1 }) {
+  const r = clipRect(v, W, H, fr); ctx.drawImage(v, r.x, r.y, r.w, r.h);
   if (blur > 0) {
-    const b = blurBuf.getContext("2d"), bs = Math.max(270 / vw, 480 / vh);
+    const b = blurBuf.getContext("2d"), q = clipRect(v, 270, 480, fr);
     if (P.FILTER_OK) b.filter = "blur(5px)";
-    b.drawImage(v, (270 - vw * bs) / 2, (480 - vh * bs) / 2, vw * bs, vh * bs); b.filter = "none";
+    b.drawImage(v, q.x, q.y, q.w, q.h); b.filter = "none";
     ctx.save(); ctx.globalAlpha = blur; ctx.imageSmoothingQuality = "high"; ctx.drawImage(blurBuf, -40, -70, W + 80, H + 140);
     ctx.globalAlpha = 0.4 * blur; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
   }
@@ -356,7 +379,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
 // picture blurs again under the list moment and the follow call.
 function drawSpotlightClip(ctx, t, f, clip, TL, list, acc) {
   const F = TL.film, blur = t < F + 0.9 ? 1 - fade(t, F, 0.9) : fade(t, TL.filmEnd - 0.7, 0.7);
-  drawClip(ctx, clip.video, blur);
+  drawClip(ctx, clip.video, blur, clipFrame(f.id));
   drawReelTitle(ctx, t, TL, acc);
   const film = Math.min(fade(t, F + 0.5, 0.4), 1 - fade(t, TL.filmEnd - 0.5, 0.4));
   if (film > 0) {
@@ -652,6 +675,7 @@ $("kitPairA").addEventListener("change", e => { kit.pairA = e.target.value; save
 $("kitPairB").addEventListener("change", e => { kit.pairB = e.target.value; save(); soon(); });
 $("kitStoryVideo").addEventListener("change", e => { kit.storyVideo = e.target.checked; save(); refresh(); });
 $("kitReelTitle").addEventListener("input", e => { kit.reelTitle = e.target.value; save(); soon(); });
+document.querySelectorAll("#kitSpotLength button, #reasons").forEach(el => el.addEventListener(el.tagName === "BUTTON" ? "click" : "input", () => setTimeout(syncClipUI, 30)));
 for (const [id, key] of [["kitSpotLength", "spotLength"], ["kitRecapStyle", "recapStyle"]])
   $(id).querySelectorAll("button").forEach(b => b.addEventListener("click", () => { kit[key] = b.dataset.v; save(); refresh(); }));
 P.onDeckChange(soon);
@@ -700,15 +724,48 @@ async function exportKit() {
 $("kitExport").addEventListener("click", exportKit);
 
 /* ---------------- clip controls (Words panel, current slide) ---------------- */
+function layoutPreview() {
+  const id = P.currentSlideId(), pv = $("clipPreview"), box = $("clipPhone"); if (!id || !pv.videoWidth) return;
+  const r = clipRect(pv, box.clientWidth, box.clientHeight, clipFrame(id));
+  Object.assign(pv.style, { left: r.x + "px", top: r.y + "px", width: r.w + "px", height: r.h + "px" });
+}
+function setFrame(patch) {
+  const id = P.currentSlideId(); if (!id) return;
+  kit.clipFrame = { ...(kit.clipFrame || {}), [id]: { ...clipFrame(id), ...patch } }; save(); syncClipUI(); soon();
+}
+// drag inside the phone preview to frame the clip
+(() => {
+  const box = $("clipPhone"); let drag = null;
+  box.addEventListener("pointerdown", e => { const pv = $("clipPreview"); if (!pv.videoWidth) return; box.setPointerCapture(e.pointerId);
+    const r = clipRect(pv, box.clientWidth, box.clientHeight, clipFrame(P.currentSlideId())); drag = { x: e.clientX, y: e.clientY, fr: clipFrame(P.currentSlideId()), ox: box.clientWidth - r.w, oy: box.clientHeight - r.h }; });
+  box.addEventListener("pointermove", e => { if (!drag) return;
+    const nx = drag.ox < -0.5 ? clamp(drag.fr.x + (e.clientX - drag.x) / drag.ox, 0, 1) : drag.fr.x;
+    const ny = drag.oy < -0.5 ? clamp(drag.fr.y + (e.clientY - drag.y) / drag.oy, 0, 1) : drag.fr.y;
+    setFrame({ x: nx, y: ny }); });
+  const end = () => { drag = null; };
+  box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+})();
+for (const [el, key] of [["clipX", "x"], ["clipY", "y"], ["clipZoom", "z"]]) $(el).addEventListener("input", e => setFrame({ [key]: +e.target.value }));
 function syncClipUI() {
   const id = P.currentSlideId(), c = id && clips.get(id), info2 = $("clipInfo"); if (!info2) return;
-  const has = !!(c && c.ready);
+  const has = !!(c && c.ready), pv = $("clipPreview");
   $("clipClear").hidden = !has; $("clipStartRow").hidden = !has;
-  if (has) {
-    const st = clipStart(id); $("clipStart").max = Math.max(0, Math.floor(c.dur * 10) / 10 - 1); $("clipStart").value = st;
-    $("clipStartOut").textContent = `${st.toFixed(1)} s`;
-    info2.textContent = `Clip: ${c.dur.toFixed(1)} s long. It plays full-screen in this film's spotlight reel.`;
-  } else info2.textContent = c ? "Loading the clip…" : "No clip. The reel uses the poster.";
+  if (!has) { pv.removeAttribute("src"); info2.textContent = c ? "Loading the clip…" : "No clip. The reel uses the poster."; return; }
+  if (pv.dataset.url !== c.url) { pv.src = c.url; pv.dataset.url = c.url; pv.addEventListener("loadedmetadata", () => layoutPreview(), { once: true }); }
+  layoutPreview();
+  const fr = clipFrame(id);
+  for (const [el, v, txt] of [["clipX", fr.x, Math.round(fr.x * 100) + "%"], ["clipY", fr.y, Math.round(fr.y * 100) + "%"], ["clipZoom", fr.z, fr.z.toFixed(2) + "×"]]) {
+    if (document.activeElement !== $(el)) $(el).value = v; $(el + "Out").textContent = txt;
+  }
+  const r = clipRange(id), mx = Math.floor(c.dur * 10) / 10;
+  for (const el of [$("clipStart"), $("clipEnd")]) el.max = mx;
+  if (document.activeElement !== $("clipStart")) $("clipStart").value = r.start;
+  if (document.activeElement !== $("clipEnd")) $("clipEnd").value = r.end;
+  $("clipStartOut").textContent = `${r.start.toFixed(1)} s`; $("clipEndOut").textContent = `${r.end.toFixed(1)} s · keeps ${r.len.toFixed(1)} s`;
+  const f = films().find(x => x.id === id), TL = f && timeline(f), used = TL ? TL.filmEnd - TL.film : r.len;
+  info2.textContent = !TL ? "" : used < r.len - 0.2 ? `The reel has room for ${used.toFixed(1)} s, so the last ${(r.len - used).toFixed(1)} s of your trim is cut off. Try Long, or trim it shorter.`
+    : used > r.len + 0.2 ? `Your words need ${used.toFixed(1)} s, so the ${r.len.toFixed(1)} s trim loops to fill it.`
+    : `The whole ${r.len.toFixed(1)} s trim plays. The reel runs ${TL.L.toFixed(0)} s.`;
 }
 $("clipFile").addEventListener("change", async e => {
   const file = e.target.files[0]; e.target.value = ""; const id = P.currentSlideId(); if (!file || !id) return;
@@ -719,11 +776,12 @@ $("clipFile").addEventListener("change", async e => {
 $("clipClear").addEventListener("click", async () => {
   const id = P.currentSlideId(), c = clips.get(id); if (!c) return;
   c.video.removeAttribute("src"); URL.revokeObjectURL(c.url); clips.delete(id); await P.idbPut("clip:" + id, null);
-  if (kit.clipStart) delete kit.clipStart[id]; save(); syncClipUI(); soon();
+  for (const k of ["clipStart", "clipEnd", "clipFrame"]) if (kit[k]) delete kit[k][id]; save(); syncClipUI(); soon();
 });
-$("clipStart").addEventListener("input", e => {
-  const id = P.currentSlideId(); kit.clipStart = { ...(kit.clipStart || {}), [id]: +e.target.value }; save();
-  $("clipStartOut").textContent = `${(+e.target.value).toFixed(1)} s`; soon();
+for (const [el, key] of [["clipStart", "clipStart"], ["clipEnd", "clipEnd"]]) $(el).addEventListener("input", e => {
+  const id = P.currentSlideId(), v = +e.target.value; kit[key] = { ...(kit[key] || {}), [id]: v }; save();
+  const pv = $("clipPreview"); if (pv.src) pv.currentTime = v; // show the frame you're trimming to
+  syncClipUI(); soon();
 });
 P.onDeckChange(() => { films().forEach(f => loadClip(f.id)); setTimeout(syncClipUI, 50); });
 
