@@ -8,14 +8,17 @@ const P = window.PCS, C = window.Cover;
 if (!P || !C) return;
 
 const KEY = "poster-card-studio:kit:v1";
-const DEFAULTS = { spotlight: null, bpm: 104, transition: "static", pairA: null, pairB: null, storyVideo: true };
+const DEFAULTS = { spotlight: null, bpm: 104, transition: "static", pairA: null, pairB: null, storyVideo: true, reelTitle: "" };
 let kit = { ...DEFAULTS };
 try { Object.assign(kit, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) { /* storage unavailable */ }
 let saveT = 0;
 const flush = () => { clearTimeout(saveT); try { localStorage.setItem(KEY, JSON.stringify(kit)); } catch (e) { /* ignore */ } };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
 
-const W = 1080, H = 1920, FPS = C.FPS || 30, SPOT = 15;
+const W = 1080, H = 1920, FPS = C.FPS || 30, SPOT = 21;
+// Reels safe area: Instagram's header covers the top, caption/audio the bottom ~380 px, buttons the right edge.
+const SAFE = { top: 210, bottom: H - 400, left: 90, right: W - 150 };
+const reelTitle = () => (kit.reelTitle || "").trim() || info().title || "Our latest list";
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const ease = x => 1 - Math.pow(1 - clamp(x), 3);
 const fade = (t, a, d) => clamp((t - a) / d);
@@ -136,48 +139,77 @@ function staticNoise(ctx, seed, alpha) {
   ctx.restore();
 }
 
-/* ---------------- spotlight reel (one film, 15 s) ---------------- */
+/* ---------------- spotlight reel (one film, then the whole list, 21 s) ----------------
+   0-2.2 reel title · 2.2-12.6 the film (poster, title and reel line, then three reasons) ·
+   12.6-14.4 "want to watch more like this?" · 14.4-18.4 every poster drops into a grid · 18.4-21 where the full list is */
 function drawSpotlight(ctx, t, f, idx, n) {
-  const acc = accentOf(f);
+  const acc = accentOf(f), list = films(), cx = (SAFE.left + SAFE.right) / 2;
   drawBackdrop(ctx, backdrop(f.poster, f.id, acc), 1.04 + 0.05 * (t / SPOT));
-  // 1. hook
-  const hk = span(t, 0.1, 2.5, 0.35);
-  if (hk > 0) {
-    const r = fit(ctx, hookOf(f), "title", 900, 4, 128, 64), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
-    const y = H * 0.44 - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
-    label(ctx, [info().kicker, `${pad2(idx)}/${pad2(n)}`].filter(Boolean).join("  ·  "), W / 2, y - 60, 26, acc, "center", hk);
-    lines(ctx, r, "title", W / 2, y, pre().title.lh, "center", "#fff", hk);
+  // 1. the reel's title
+  const ti = span(t, 0.1, 2.3, 0.35);
+  if (ti > 0) {
+    const r = fit(ctx, reelTitle(), "title", SAFE.right - SAFE.left, 4, 150, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+    const y = (SAFE.top + SAFE.bottom) / 2 - h / 2 + (1 - ease(fade(t, 0.1, 0.5))) * 40;
+    label(ctx, info().kicker, cx, y - 70, 34, acc, "center", ti);
+    lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", ti);
   }
-  // 2. the film: poster, title, three reasons
-  const film = Math.min(ease(fade(t, 2.3, 0.6)), 1 - fade(t, 12.3, 0.35));
+  // 2. the film
+  const film = Math.min(ease(fade(t, 2.2, 0.55)), 1 - fade(t, 12.25, 0.35));
   if (film > 0) {
-    const cd = card(f, 600);
-    drawCard(ctx, cd, W / 2, 190, 0.9 + 0.1 * ease(fade(t, 2.3, 0.7)), film);
-    let y = 190 + cd.h + 56;
-    const tr = fit(ctx, f.title, "title", 940, 2, 92, 52);
-    y += lines(ctx, tr, "title", W / 2, y, pre().title.lh, "center", "#fff", film * fade(t, 2.8, 0.4));
-    label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), W / 2, y + 44, 24, "rgba(255,255,255,0.75)", "center", film * fade(t, 3.0, 0.4));
-    const rs = reasonsOf(f), d = 8.6 / Math.max(1, rs.length);
+    const cd = card(f, 600), top = SAFE.top + 30, below = top + cd.h + 60;
+    drawCard(ctx, cd, cx, top, 0.9 + 0.1 * ease(fade(t, 2.2, 0.7)), film);
+    // title and reel line under the poster, until the reasons take the space
+    const intro = film * (1 - fade(t, 3.9, 0.35));
+    if (intro > 0) {
+      const tr = fit(ctx, f.title, "title", SAFE.right - SAFE.left, 2, 110, 60);
+      const h = lines(ctx, tr, "title", cx, below, pre().title.lh, "center", "#fff", intro * fade(t, 2.6, 0.35));
+      const hook = (f.reelLine || "").trim();
+      if (hook) { const hr = fit(ctx, hook, "body", SAFE.right - SAFE.left, 2, 54, 40); lines(ctx, hr, "body", cx, below + h + 24, pre().body.lh, "center", "rgba(255,255,255,0.9)", intro * fade(t, 2.9, 0.35)); }
+      else label(ctx, [f.year, f.director].filter(Boolean).join("  ·  "), cx, below + h + 50, 28, "rgba(255,255,255,0.8)", "center", intro * fade(t, 2.9, 0.35));
+    }
+    // reasons, one at a time, in the space under the poster; the title moves to a label above it
+    const later = film * fade(t, 4.0, 0.35);
+    if (later > 0) label(ctx, [f.title, f.year].filter(Boolean).join("  ·  "), cx, top - 40, 28, "#fff", "center", later);
+    const rs = reasonsOf(f), d = 8.2 / Math.max(1, rs.length);
     rs.forEach((txt, i) => {
-      const a = span(t, 3.7 + i * d, 3.7 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
-      const r = fit(ctx, txt, "body", 820, 3, 46, 32), bh = r.size * (0.8 + (r.lines.length - 1) * pre().body.lh) + 84, by = H - 150 - bh;
-      ctx.save(); ctx.globalAlpha = a * 0.62; ctx.fillStyle = "#000"; rr(ctx, 80, by, W - 160, bh, 22); ctx.fill();
-      ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, 80, by, 8, bh, 4); ctx.fill(); ctx.restore();
-      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, 124, by + 34, 20, acc, "left", a);
-      lines(ctx, r, "body", 124, by + 50, pre().body.lh, "left", "#fff", a);
+      const a = span(t, 4.2 + i * d, 4.2 + (i + 1) * d, 0.3) * film; if (a <= 0) return;
+      const r = fit(ctx, txt, "body", SAFE.right - SAFE.left - 90, 4, 56, 38), th = r.size * (0.8 + (r.lines.length - 1) * pre().body.lh);
+      const bh = Math.min(th + 110, SAFE.bottom - below + 10), by = below - 10;
+      ctx.save(); ctx.globalAlpha = a * 0.66; ctx.fillStyle = "#000"; rr(ctx, SAFE.left - 20, by, SAFE.right - SAFE.left + 40, bh, 26); ctx.fill();
+      ctx.globalAlpha = a; ctx.fillStyle = acc; rr(ctx, SAFE.left - 20, by, 10, bh, 5); ctx.fill(); ctx.restore();
+      label(ctx, `Why watch  ·  ${i + 1}/${rs.length}`, SAFE.left + 30, by + 44, 24, acc, "left", a);
+      lines(ctx, r, "body", SAFE.left + 30, by + 66, pre().body.lh, "left", "#fff", a);
     });
   }
-  // 3. bridge back to the post
-  const br = ease(fade(t, 12.6, 0.5));
+  // 3. want more?
+  const more = span(t, 12.6, 14.5, 0.3);
+  if (more > 0) {
+    const r = fit(ctx, "Want to watch more like this?", "title", SAFE.right - SAFE.left, 3, 140, 80), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+    lines(ctx, r, "title", cx, (SAFE.top + SAFE.bottom) / 2 - h / 2, pre().title.lh, "center", "#fff", more);
+  }
+  // 4. the whole list drops into a grid, and stays dimmed behind the bridge
+  if (t >= 14.3) {
+    const cols = list.length > 12 ? 5 : list.length > 6 ? 4 : 3, rows = Math.ceil(list.length / cols), gap = 18;
+    const gridTop = SAFE.top + 120, gridW = SAFE.right - SAFE.left, availH = SAFE.bottom - gridTop - 20;
+    const tw = Math.floor(Math.min((gridW - gap * (cols - 1)) / cols, (availH - gap * (rows - 1)) / rows / 1.5));
+    const x0 = cx - (cols * tw + (cols - 1) * gap) / 2, dim = 1 - 0.9 * fade(t, 18.3, 0.4);
+    label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, SAFE.top + 60, 28, acc, "center", fade(t, 14.3, 0.3) * dim);
+    list.forEach((g, i) => {
+      const a = ease(fade(t, 14.4 + i * 0.14, 0.3)); if (a <= 0) return;
+      const gx = x0 + (i % cols) * (tw + gap) + tw / 2, gy = gridTop + Math.floor(i / cols) * (tw * 1.5 + gap);
+      drawCard(ctx, card(g, tw), gx, gy + (1 - a) * 40, 0.92 + 0.08 * a, a * dim);
+      if (g.id === f.id) { ctx.save(); ctx.globalAlpha = a * dim; ctx.strokeStyle = acc; ctx.lineWidth = 8; rr(ctx, gx - tw / 2 - 6, gy - 6, tw + 12, tw * 1.5 + 12, 12); ctx.stroke(); ctx.restore(); }
+    });
+  }
+  // 5. where the full list lives
+  const br = ease(fade(t, 18.4, 0.45));
   if (br > 0) {
-    const cv = coverImage(720), w = 600, h = w * cv.height / cv.width;
-    ctx.save(); ctx.globalAlpha = br; ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 80; ctx.shadowOffsetY = 24;
-    ctx.drawImage(cv, (W - w) / 2, 250 + (1 - br) * 60, w, h); ctx.restore();
-    let y = 250 + h + 90;
-    label(ctx, `No. ${idx} of ${n}${info().kicker ? " in " + info().kicker : ""}`, W / 2, y, 26, acc, "center", br);
-    const r = fit(ctx, "The full list and why to watch each one is on our page", "title", 900, 3, 72, 44);
-    y += 30 + lines(ctx, r, "title", W / 2, y + 20, pre().title.lh, "center", "#fff", br);
-    label(ctx, handle(), W / 2, y + 70, 26, "rgba(255,255,255,0.8)", "center", br);
+    ctx.save(); ctx.globalAlpha = 0.45 * br; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
+    const r = fit(ctx, "The full list is pinned on our profile", "title", SAFE.right - SAFE.left, 3, 120, 70), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+    const y = (SAFE.top + SAFE.bottom) / 2 - h / 2 - 60;
+    lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", br);
+    label(ctx, handle(), cx, y + h + 90, 36, acc, "center", br);
+    label(ctx, "Tap our name to see all " + list.length, cx, y + h + 160, 26, "rgba(255,255,255,0.85)", "center", fade(t, 18.9, 0.4));
   }
 }
 
@@ -225,7 +257,7 @@ function drawRecap(ctx, t, list, frame) {
     label(ctx, ci.kicker, W / 2, 700, 28, P.state.accent || "#e9b65a", "center", a);
     const r = fit(ctx, "That's the list.", "title", 920, 2, 120, 70);
     const h = lines(ctx, r, "title", W / 2, 760, pre().title.lh, "center", "#fff", a);
-    const b = fit(ctx, "The why-watch for every film is in the post.", "body", 820, 3, 46, 32);
+    const b = fit(ctx, "The full list, with the why-watch for every film, is pinned on our profile.", "body", 820, 3, 46, 32);
     lines(ctx, b, "body", W / 2, 760 + h + 40, pre().body.lh, "center", "rgba(255,255,255,0.85)", fade(u, 0.5, 0.4));
     label(ctx, handle(), W / 2, 1260, 28, "rgba(255,255,255,0.8)", "center", fade(u, 0.8, 0.4));
   }
@@ -339,10 +371,10 @@ function captions(list = films()) {
   spotlightIds(list).forEach(id => {
     const i = list.findIndex(f => f.id === id), f = list[i];
     out.push(`=== SPOTLIGHT REEL: ${f.title} ===`, hookOf(f), "",
-      `${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}. No. ${i + 1} of ${n} in ${kick}. The full list is on our page.`, "",
+      `${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}. No. ${i + 1} of ${n} in ${kick}: ${reelTitle()}. The full list is pinned on our profile.`, "",
       [CORE_TAGS[0], CORE_TAGS[1], tagOf(f.title)].join(" "), "");
   });
-  out.push("=== RECAP REEL ===", `${n} films in ${Math.round(recapLen(n))} seconds. The why-watch for every one is in the post.`, "", CORE_TAGS.slice(0, 3).join(" "), "");
+  out.push("=== RECAP REEL ===", `${n} films in ${Math.round(recapLen(n))} seconds. The full list, with the why-watch for every one, is pinned on our profile.`, "", CORE_TAGS.slice(0, 3).join(" "), "");
   out.push("=== ALT TEXT (one per slide) ===", `Cover: ${ci.kicker} ${ci.title}. ${plain(ci.line)}`.trim());
   list.forEach((f, i) => out.push(`${i + 1}. Poster for ${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}, with a short recommendation: ${plain(f.blurb)}`));
   return out.join("\n") + "\n";
@@ -373,6 +405,12 @@ Day 6  Recap reel.
 ${by(6)}
 Day 7  Story: next list soon (countdown sticker). Save the week's stories as a highlight.
 ${by(7)}
+
+Getting people from a reel to the post
+- Pin the carousel to the top of your profile (post menu > Pin to your profile). Every reel ends on "the full list is pinned on our profile".
+- Chain the spotlights with "Link a reel" (share screen, or the reel's ... menu): spotlight 1 > 2 > 3 > recap. Titles max 15 characters, e.g. "Next pick".
+- If you edit in Edits, try adding a tappable link to your profile inside the video.
+- Stories are the only place a post link works: share the carousel to your story, and keep it in a highlight.
 
 Tips
 - Add music in Instagram. The reels are silent on purpose, so any track works and nothing gets muted.
@@ -427,6 +465,7 @@ function refresh() {
   $("kitBpm").value = kit.bpm; $("kitBpmOut").textContent = `${kit.bpm} bpm · ${beatLen().toFixed(1)} s a film`;
   $("kitTransition").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(kit.transition === b.dataset.v)));
   $("kitStoryVideo").checked = !!kit.storyVideo;
+  if (document.activeElement !== $("kitReelTitle")) $("kitReelTitle").value = kit.reelTitle || "";
   bgCache.clear(); cardCache.clear(); coverCache = null;
   if (!playing) showCurrent();
 }
@@ -437,6 +476,7 @@ $("kitTransition").querySelectorAll("button").forEach(b => b.addEventListener("c
 $("kitPairA").addEventListener("change", e => { kit.pairA = e.target.value; save(); soon(); });
 $("kitPairB").addEventListener("change", e => { kit.pairB = e.target.value; save(); soon(); });
 $("kitStoryVideo").addEventListener("change", e => { kit.storyVideo = e.target.checked; save(); refresh(); });
+$("kitReelTitle").addEventListener("input", e => { kit.reelTitle = e.target.value; save(); soon(); });
 P.onDeckChange(soon);
 // words typed into the kit fields (or anywhere) change what the kit draws
 document.querySelectorAll("[data-k]").forEach(el => el.addEventListener("input", soon));
