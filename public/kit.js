@@ -229,11 +229,11 @@ function drawSpotlight(ctx, t, f, idx, n) {
   const br = ease(fade(t, 18.4, 0.45));
   if (br > 0) {
     ctx.save(); ctx.globalAlpha = 0.45 * br; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
-    const r = fit(ctx, "The full list is pinned on our profile", "title", SAFE.right - SAFE.left, 3, 120, 70), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
+    const r = fit(ctx, "Want more recommendations?", "title", SAFE.right - SAFE.left, 3, 124, 72), h = r.size * (0.8 + (r.lines.length - 1) * pre().title.lh);
     const y = MID - h / 2 - 60;
     lines(ctx, r, "title", cx, y, pre().title.lh, "center", "#fff", br);
-    label(ctx, handle(), cx, y + h + 90, 36, acc, "center", br);
-    label(ctx, "Tap our name to see all " + list.length, cx, y + h + 160, 26, "rgba(255,255,255,0.85)", "center", fade(t, 18.9, 0.4));
+    label(ctx, handle() ? "Follow " + handle() : "Follow us", cx, y + h + 96, 38, acc, "center", fade(t, 18.7, 0.4), 0.5);
+    label(ctx, "for more lists like this", cx, y + h + 166, 26, "rgba(255,255,255,0.85)", "center", fade(t, 19.0, 0.4));
   }
 }
 
@@ -281,7 +281,7 @@ function drawRecap(ctx, t, list, frame) {
     label(ctx, ci.kicker, W / 2, 700, 28, P.state.accent || "#e9b65a", "center", a);
     const r = fit(ctx, "That's the list.", "title", 920, 2, 120, 70);
     const h = lines(ctx, r, "title", W / 2, 760, pre().title.lh, "center", "#fff", a);
-    const b = fit(ctx, "The full list, with the why-watch for every film, is pinned on our profile.", "body", 820, 3, 46, 32);
+    const b = fit(ctx, handle() ? `Follow ${handle()} for more lists like this.` : "Follow us for more lists like this.", "body", 820, 3, 46, 32);
     lines(ctx, b, "body", W / 2, 760 + h + 40, pre().body.lh, "center", "rgba(255,255,255,0.85)", fade(u, 0.5, 0.4));
     label(ctx, handle(), W / 2, 1260, 28, "rgba(255,255,255,0.8)", "center", fade(u, 0.8, 0.4));
   }
@@ -395,10 +395,10 @@ function captions(list = films()) {
   spotlightIds(list).forEach(id => {
     const i = list.findIndex(f => f.id === id), f = list[i];
     out.push(`=== SPOTLIGHT REEL: ${f.title} ===`, hookOf(f), "",
-      `${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}. No. ${i + 1} of ${n} in ${kick}: ${reelTitle()}. The full list is pinned on our profile.`, "",
+      `${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}. No. ${i + 1} of ${n} in ${kick}: ${reelTitle()}. Want more recommendations? Follow ${handle() || "us"} for more lists like this.`, "",
       [CORE_TAGS[0], CORE_TAGS[1], tagOf(f.title)].join(" "), "");
   });
-  out.push("=== RECAP REEL ===", `${n} films in ${Math.round(recapLen(n))} seconds. The full list, with the why-watch for every one, is pinned on our profile.`, "", CORE_TAGS.slice(0, 3).join(" "), "");
+  out.push("=== RECAP REEL ===", `${n} films in ${Math.round(recapLen(n))} seconds. Want more recommendations? Follow ${handle() || "us"} for more lists like this.`, "", CORE_TAGS.slice(0, 3).join(" "), "");
   out.push("=== ALT TEXT (one per slide) ===", `Cover: ${ci.kicker} ${ci.title}. ${plain(ci.line)}`.trim());
   list.forEach((f, i) => out.push(`${i + 1}. Poster for ${f.title}${f.year ? ` (${f.year})` : ""}${f.director ? `, directed by ${f.director}` : ""}, with a short recommendation: ${plain(f.blurb)}`));
   return out.join("\n") + "\n";
@@ -431,7 +431,7 @@ Day 7  Story: next list soon (countdown sticker). Save the week's stories as a h
 ${by(7)}
 
 Getting people from a reel to the post
-- Pin the carousel to the top of your profile (post menu > Pin to your profile). Every reel ends on "the full list is pinned on our profile".
+- Pin the carousel to the top of your profile (post menu > Pin to your profile), so anyone who follows from a reel sees the full list first.
 - Chain the spotlights with "Link a reel" (share screen, or the reel's ... menu): spotlight 1 > 2 > 3 > recap. Titles max 15 characters, e.g. "Next pick".
 - If you edit in Edits, try adding a tappable link to your profile inside the video.
 - Stories are the only place a post link works: share the carousel to your story, and keep it in a highlight.
