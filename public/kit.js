@@ -331,17 +331,58 @@ function drawReasons(ctx, t, rb, x, y, w, TL, alpha, acc, shadow) {
   });
 }
 // The opening lines under the title: year · director, then the cast, then the reel line
-function introBits(ctx, f, maxW) {
-  const meta = [f.year, f.director].filter(Boolean).join("  ·  "), cast = (f.cast || "").split(/\s*,\s*/).filter(Boolean).slice(0, 3).join("  ·  ");
-  const hook = (f.reelLine || "").trim(), hr = hook ? fit(ctx, hook, "body", maxW, 2, 54, 40) : null;
-  const h = (meta ? 52 : 0) + (cast ? 46 : 0) + (hr ? 30 + hr.size * (0.8 + (hr.lines.length - 1) * pre().body.lh) + hr.size * 0.25 : 0);
-  return { meta, cast, hr, h };
+// The reel line is set as a pull quote: italic in the title's typeface (body italic when titles are all caps), about
+// 60% of the title's size, with hanging accent quote marks and a short accent rule above it.
+function hookFont(size) {
+  const p = pre(), f = p.title.upper ? p.body : p.title;
+  return `italic ${f.weight} ${size}px "${f.family}", ${f.fb}`;
 }
-function drawIntroBits(ctx, b, x, y, alphaMeta, alphaHook) {
+function fitHook(ctx, text, maxW, titleSize) {
+  let r = null;
+  for (let s = Math.round(Math.min(76, titleSize * 0.62)); s >= 34; s -= 2) {
+    ctx.font = hookFont(s); const ls = P.wrapPlain(ctx, text, maxW - s); r = { size: s, lines: ls };
+    if (ls.length <= 3 && ls.every(l => ctx.measureText(l).width <= maxW - s)) break;
+  }
+  return r;
+}
+const HOOK_LH = 1.18, RULE = 56;
+function introBits(ctx, f, maxW, titleSize = 100) {
+  const meta = [f.year, f.director].filter(Boolean).join("  ·  "), cast = (f.cast || "").split(/\s*,\s*/).filter(Boolean).slice(0, 3).join("  ·  ");
+  const hook = (f.reelLine || "").trim(), hr = hook ? fitHook(ctx, hook, maxW, titleSize) : null;
+  const hookH = hr ? RULE + hr.size * (0.8 + (hr.lines.length - 1) * HOOK_LH) + hr.size * 0.3 : 0;
+  return { meta, cast, hr, acc: accentOf(f), h: (meta ? 52 : 0) + (cast ? 46 : 0) + hookH };
+}
+// Words rise and fade in one after another from t0; quote marks arrive with the first and last words.
+function drawHook(ctx, hr, x, y, t, t0, alpha, acc) {
+  if (!hr || alpha <= 0) return;
+  const s = hr.size;
+  ctx.save(); ctx.globalAlpha = alpha * fade(t, t0 - 0.1, 0.4); ctx.fillStyle = acc; rr(ctx, x - 24, y + RULE * 0.35, 48, 3, 1.5); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.font = hookFont(s); ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+  ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 24; ctx.shadowOffsetY = 3;
+  const space = ctx.measureText(" ").width; let k = 0;
+  const total = hr.lines.reduce((n, l) => n + l.split(" ").length, 0);
+  hr.lines.forEach((line, li) => {
+    const words = line.split(" "), widths = words.map(w => ctx.measureText(w).width);
+    const lw = widths.reduce((a, b) => a + b, 0) + space * (words.length - 1);
+    let wx = x - lw / 2; const base = y + RULE + s * 0.8 + li * s * HOOK_LH;
+    words.forEach((w, wi) => {
+      const a = ease(fade(t, t0 + k * 0.07, 0.35)) * alpha;
+      if (a > 0) {
+        ctx.globalAlpha = a; ctx.fillStyle = "#fff"; ctx.fillText(w, wx, base + (1 - a / Math.max(alpha, 0.001)) * 14);
+        ctx.fillStyle = acc;
+        if (k === 0) { const q = "“"; ctx.fillText(q, wx - ctx.measureText(q).width - 4, base); }
+        if (k === total - 1) ctx.fillText("”", wx + widths[wi] + 4, base);
+      }
+      wx += widths[wi] + space; k++;
+    });
+  });
+  ctx.restore();
+}
+function drawIntroBits(ctx, b, x, y, alphaMeta, alphaHook, t = 99, t0 = 0) {
   let yy = y;
   if (b.meta) { yy += 34; label(ctx, b.meta, x, yy, 28, "rgba(255,255,255,0.85)", "center", alphaMeta); yy += 18; }
   if (b.cast) { yy += 32; label(ctx, b.cast, x, yy, 24, "rgba(255,255,255,0.7)", "center", alphaMeta, 0.6); yy += 14; }
-  if (b.hr) lines(ctx, b.hr, "body", x, yy + 30, pre().body.lh, "center", "rgba(255,255,255,0.92)", alphaHook);
+  drawHook(ctx, b.hr, x, yy, t, t0, alphaHook, b.acc);
 }
 
 function drawSpotlight(ctx, t, f, idx, n) {
@@ -355,7 +396,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
   if (film > 0) {
     const pw = 640, cd = card(f, pw), maxW = SAFE.right - SAFE.left, gap = 46, avail = SAFE.bottom - SAFE.top;
     const tr = fit(ctx, f.title, "title", maxW, 2, 112, 60), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
-    const bits = introBits(ctx, f, maxW), hA = cd.h + gap + th + bits.h, hB = cd.h + gap + th;
+    const bits = introBits(ctx, f, maxW, tr.size), hA = cd.h + gap + th + bits.h, hB = cd.h + gap + th;
     // breathing room between the title and the box: at least 96 px, and spare height goes here first (up to 190)
     // reason text sits just under the shrunk title's size: size it for a first guess at the shrink, then refit
     const boxMax = Math.round(avail * 0.44), minGap = 96;
@@ -371,7 +412,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
     ctx.save(); ctx.translate(cx, top); ctx.scale(s * pop, s * pop);
     drawCard(ctx, cd, 0, 0, 1, film);
     lines(ctx, tr, "title", 0, cd.h + gap, pre().title.lh, "center", "#fff", film * fade(t, F + 0.4, 0.35));
-    drawIntroBits(ctx, bits, 0, cd.h + gap + th, film * fade(t, F + 0.6, 0.35) * (1 - k), film * fade(t, F + 0.8, 0.35) * (1 - k));
+    drawIntroBits(ctx, bits, 0, cd.h + gap + th, film * fade(t, F + 0.6, 0.35) * (1 - k), film * (1 - k), t, F + 0.9);
     ctx.restore();
     drawReasons(ctx, t, rb, SAFE.left, topB + hB * sB + gapB, maxW, TL, film, acc, false);
   }
@@ -396,9 +437,9 @@ function drawSpotlightClip(ctx, t, f, clip, TL, list, acc) {
     const ia = Math.min(fade(t, F + 0.6, 0.4), 1 - fade(t, introEnd - 0.4, 0.4));
     if (ia > 0) {
       const tr = fit(ctx, f.title, "title", maxW, 2, 120, 64), th = tr.size * (0.8 + (tr.lines.length - 1) * pre().title.lh) + tr.size * 0.25;
-      const bits = introBits(ctx, f, maxW), y = SAFE.bottom - th - bits.h;
+      const bits = introBits(ctx, f, maxW, tr.size), y = SAFE.bottom - th - bits.h;
       lines(ctx, tr, "title", cx, y, pre().title.lh, "center", "#fff", ia);
-      ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 24; drawIntroBits(ctx, bits, cx, y + th, ia, ia); ctx.restore();
+      ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 24; drawIntroBits(ctx, bits, cx, y + th, ia, ia, t, F + 1.0); ctx.restore();
     }
     const rb = reasonBox(ctx, f, maxW, Math.round((SAFE.bottom - SAFE.top) * 0.34), 50);
     drawReasons(ctx, t, rb, SAFE.left, SAFE.bottom - rb.h, maxW, TL, film, accentOf(f), true);
