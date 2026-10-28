@@ -157,6 +157,10 @@ function timeline(f) {
   const d = { title: long ? 2.8 : 2.2, intro: long ? 3.4 : 2.2, more: long ? 2.4 : 1.8, list: long ? 3 + n * 1.2 : 2.2 + n * 0.7, follow: long ? 4 : 3 };
   const fixed = () => d.title + d.intro + 0.9 + d.more + d.list + d.follow;
   const sum = a => a.reduce((x, y) => x + y, 0);
+  if (!long && reasons.length) { // Quick: linger on the list a little longer, paid for by the reason boxes
+    const extra = 0.4 + n * 0.25, rs = sum(reasons);
+    reasons = reasons.map(r => Math.max(1.5, r - extra * r / rs)); d.list += extra;
+  }
   if (fixed() + sum(reasons) > cap) { // squeeze the reasons first (never below 1.6 s each), then the list moment
     const k = Math.max(0, (cap - fixed()) / Math.max(0.01, sum(reasons)));
     reasons = reasons.map(r => Math.max(1.5, r * k));
