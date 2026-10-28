@@ -22,6 +22,15 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 - Work autosaves in the browser (localStorage for words and settings, IndexedDB for images).
 - **Save project** downloads the whole carousel as one `.json` file: slides, posters, backdrops, cover and look. **Open project** (or dropping the file on the page) loads it back, replacing what's open. Use it for backups, for moving between devices, and for keeping one file per carousel.
 
+## Kit (experimental)
+
+In Carousel mode, the Kit panel turns the finished project into posts that point back to it:
+
+- Spotlight reels (9:16 MP4), one per starred film: a reel title, the film's poster or a clip of it with three reasons, the whole list, and a follow call. Quick (up to 30 s) or Long (up to 1 min), timed by the amount of text.
+- Clips: add a video per film, trim it, and drag to frame it in a phone-shaped preview. The clip's sound is kept (AAC in Chrome and Edge on Windows and Mac). Clips are stored in the browser, not in project files.
+- A recap reel cut to a tempo, five story frames with room for stickers, captions with alt text and hashtags, a Letterboxd import file and a week plan.
+- Export one asset, or the full kit as a zip.
+
 ## Run locally
 
 Open `public/index.html` in a browser. There's no build step. Fonts load from Google Fonts, so you need to be online.
