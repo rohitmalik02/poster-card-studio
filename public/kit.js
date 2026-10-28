@@ -212,7 +212,7 @@ function attachClip(id, blob) {
   const old = clips.get(id); if (old) { old.video.removeAttribute("src"); URL.revokeObjectURL(old.url); }
   const url = URL.createObjectURL(blob), v = document.createElement("video");
   v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
-  const c = { video: v, url, dur: 0, ready: false }; clips.set(id, c);
+  const c = { video: v, url, blob, dur: 0, ready: false }; clips.set(id, c);
   v.addEventListener("loadedmetadata", () => { c.dur = v.duration || 0; });
   v.addEventListener("loadeddata", () => { c.ready = true; syncClipUI(); soon(); });
   return c;
@@ -701,7 +701,13 @@ async function exportKit() {
         const frames = Math.round(a.seconds * FPS);
         const blob = await C.encodeVideo(W, H, frames, async (ctx, i) => { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
           f => { status.textContent = `${step} · ${a.name} · ${Math.round(f * 100)}%`; });
-        files.push({ name: a.file + ".mp4", data: new Uint8Array(await blob.arrayBuffer()) });
+        let out = blob;
+        if (a.clipFor && clipOf(a.clipFor) && keepSound(a.clipFor.id)) {
+          status.textContent = `${step} · ${a.name} · adding the clip's sound`;
+          try { out = await withClipSound(blob, a.clipFor, a.seconds); }
+          catch (e) { console.error(e); P.toast(`${a.clipFor.title}: saved without sound (${e.message || e}).`); }
+        }
+        files.push({ name: a.file + ".mp4", data: new Uint8Array(await out.arrayBuffer()) });
       } else {
         status.textContent = `${step} · ${a.name}`;
         const c = document.createElement("canvas"); c.width = W; c.height = H; const ctx = c.getContext("2d");
@@ -727,6 +733,111 @@ async function exportKit() {
 }
 $("kitExport").addEventListener("click", exportKit);
 
+/* ---------------- clip sound: decoded, laid under the clip's part of the reel, AAC, packaged with the video ---------------- */
+const keepSound = id => ((kit.clipAudio || {})[id] ?? true) !== false;
+async function clipAudio(c) {
+  if (c.audio !== undefined) return c.audio;
+  try { c.audio = await new OfflineAudioContext(2, 48000, 48000).decodeAudioData(await c.blob.arrayBuffer()); }
+  catch (e) { c.audio = null; } // no audio track, or a format the browser can't decode
+  return c.audio;
+}
+// The reel's soundtrack: silent except under the clip's section, which follows the same trim and looping as the
+// picture, with 0.3 s fades at its edges and tiny ones at loop seams so nothing clicks.
+function soundtrack(f, L, buf) {
+  const TL = timeline(f), sr = buf.sampleRate, n = Math.ceil(L * sr), chs = Math.min(2, buf.numberOfChannels);
+  const out = Array.from({ length: chs }, () => new Float32Array(n)), src = Array.from({ length: chs }, (_, i) => buf.getChannelData(i));
+  const r = clipRange(f.id), st = Math.floor(r.start * sr), lenS = Math.max(1, Math.floor(r.len * sr));
+  const a0 = Math.floor(TL.film * sr), a1 = Math.min(n, Math.floor(TL.filmEnd * sr)), fade = Math.floor(0.3 * sr), seam = Math.floor(0.012 * sr);
+  for (let i = a0; i < a1; i++) {
+    const local = i - a0, pos = local % lenS, si = st + pos; if (si >= src[0].length) continue;
+    let g = Math.min(1, local / fade, (a1 - i) / fade);
+    if (local >= lenS && pos < seam) g *= pos / seam;
+    if (lenS - pos < seam && local + (lenS - pos) < a1 - a0) g *= (lenS - pos) / seam;
+    for (let c = 0; c < chs; c++) out[c][i] = src[c][si] * g;
+  }
+  return { sr, chs, out, n };
+}
+// AAC first (what Instagram expects; Chrome and Edge on Windows and Mac use the system's encoder), Opus as a
+// fallback where AAC isn't available (Linux builds, Firefox).
+async function encodeAAC(track) {
+  if (typeof AudioEncoder === "undefined") throw new Error("this browser can't encode audio (try Chrome or Edge)");
+  let cfg = null;
+  for (const codec of ["mp4a.40.2", "opus"]) {
+    const c = { codec, sampleRate: track.sr, numberOfChannels: track.chs, bitrate: 160000 };
+    try { if ((await AudioEncoder.isConfigSupported(c)).supported) { cfg = c; break; } } catch (e) { /* try the next */ }
+  }
+  if (!cfg) throw new Error("this browser can't encode audio (try Chrome or Edge)");
+  const chunks = []; let failed = null;
+  const enc = new AudioEncoder({ output: (chunk, meta) => chunks.push({ chunk, meta }), error: e => { failed = e; } });
+  enc.configure(cfg);
+  for (let i = 0; i < track.n; i += 1024) {
+    const m = Math.min(1024, track.n - i), data = new Float32Array(m * track.chs);
+    for (let c = 0; c < track.chs; c++) data.set(track.out[c].subarray(i, i + m), c * m);
+    const ad = new AudioData({ format: "f32-planar", sampleRate: track.sr, numberOfFrames: m, numberOfChannels: track.chs, timestamp: Math.round(i / track.sr * 1e6), data });
+    enc.encode(ad); ad.close();
+  }
+  await enc.flush(); enc.close(); if (failed) throw failed;
+  return { chunks, cfg };
+}
+// Read the H.264 samples back out of the video encoder's MP4 (it writes video only), to package them with audio.
+function readMp4Video(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength), u32 = o => dv.getUint32(o), typ = o => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]);
+  const find = (start, end, path) => {
+    for (let o = start; o < end;) {
+      let size = u32(o), hdr = 8; const t = typ(o + 4);
+      if (size === 1) { size = Number(dv.getBigUint64(o + 8)); hdr = 16; } else if (size === 0) size = end - o;
+      if (t === path[0]) return path.length === 1 ? { o, body: o + hdr, end: o + size } : find(o + hdr, o + size, path.slice(1));
+      o += size;
+    }
+    return null;
+  };
+  const stbl = find(0, u8.length, ["moov", "trak", "mdia", "minf", "stbl"]); if (!stbl) throw new Error("couldn't read the video back");
+  const box = n => find(stbl.body, stbl.end, [n]);
+  const stsd = box("stsd"), avc1 = stsd.body + 8, width = dv.getUint16(avc1 + 8 + 24), height = dv.getUint16(avc1 + 8 + 26);
+  const avcC = find(avc1 + 8 + 78, u8.length, ["avcC"]), desc = u8.slice(avcC.body, avcC.end);
+  const stsz = box("stsz"), fixed = u32(stsz.body + 4), count = u32(stsz.body + 8), sizes = [];
+  for (let i = 0; i < count; i++) sizes.push(fixed || u32(stsz.body + 12 + i * 4));
+  const co = box("stco") || box("co64"), co64 = typ(co.o + 4) === "co64", nch = u32(co.body + 4), offs = [];
+  for (let i = 0; i < nch; i++) offs.push(co64 ? Number(dv.getBigUint64(co.body + 8 + i * 8)) : u32(co.body + 8 + i * 4));
+  const stsc = box("stsc"), ne = u32(stsc.body + 4), ents = [];
+  for (let i = 0; i < ne; i++) ents.push([u32(stsc.body + 8 + i * 12), u32(stsc.body + 12 + i * 12)]);
+  const stss = box("stss"), keys = new Set();
+  if (stss) { const k = u32(stss.body + 4); for (let i = 0; i < k; i++) keys.add(u32(stss.body + 8 + i * 4) - 1); } else for (let i = 0; i < count; i++) keys.add(i);
+  const samples = []; let si = 0;
+  for (let ch = 0; ch < nch && si < count; ch++) {
+    let per = 1; for (const [first, spc] of ents) if (ch + 1 >= first) per = spc;
+    let off = offs[ch];
+    for (let k = 0; k < per && si < count; k++, si++) { samples.push({ data: u8.subarray(off, off + sizes[si]), key: keys.has(si) }); off += sizes[si]; }
+  }
+  const hex = b => b.toString(16).padStart(2, "0");
+  return { width, height, desc, codec: `avc1.${hex(desc[1])}${hex(desc[2])}${hex(desc[3])}`, samples };
+}
+let muxerP = null;
+function loadMuxer() {
+  return (muxerP ||= new Promise((res, rej) => {
+    const sc = document.createElement("script"); sc.src = "vendor/mp4-muxer.js";
+    sc.onload = () => res(window.Mp4Muxer); sc.onerror = () => { muxerP = null; sc.remove(); rej(new Error("couldn't load the audio packager")); };
+    document.head.append(sc);
+  }));
+}
+// Returns the reel with the clip's sound added, or the silent video if there's nothing to add.
+async function withClipSound(videoBlob, f, L) {
+  const c = clipOf(f); if (!c || !keepSound(f.id)) return videoBlob;
+  const buf = await clipAudio(c); if (!buf) return videoBlob;
+  const [M, aac] = await Promise.all([loadMuxer(), encodeAAC(soundtrack(f, L, buf))]);
+  const v = readMp4Video(new Uint8Array(await videoBlob.arrayBuffer()));
+  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), fastStart: "in-memory", firstTimestampBehavior: "offset",
+    video: { codec: "avc", width: v.width, height: v.height, frameRate: FPS },
+    audio: { codec: aac.cfg.codec === "opus" ? "opus" : "aac", numberOfChannels: aac.cfg.numberOfChannels, sampleRate: aac.cfg.sampleRate } });
+  const fd = 1e6 / FPS;
+  v.samples.forEach((sm, i) => muxer.addVideoChunkRaw(sm.data, sm.key ? "key" : "delta", Math.round(i * fd), Math.round(fd),
+    i === 0 ? { decoderConfig: { codec: v.codec, codedWidth: v.width, codedHeight: v.height, description: v.desc } } : undefined));
+  aac.chunks.forEach(({ chunk, meta }) => muxer.addAudioChunk(chunk, meta));
+  muxer.finalize();
+  if (aac.cfg.codec === "opus") P.toast("This browser saved the clip's sound as Opus, which Instagram may not accept. Export from Chrome or Edge on Windows or Mac for AAC.");
+  return new Blob([muxer.target.buffer], { type: "video/mp4" });
+}
+
 /* ---------------- clip controls (Words panel, current slide) ---------------- */
 function layoutPreview() {
   const id = P.currentSlideId(), pv = $("clipPreview"), box = $("clipPhone"); if (!id || !pv.videoWidth) return;
@@ -750,13 +861,15 @@ function setFrame(patch) {
   box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
 })();
 for (const [el, key] of [["clipX", "x"], ["clipY", "y"], ["clipZoom", "z"]]) $(el).addEventListener("input", e => setFrame({ [key]: +e.target.value }));
+$("clipAudio").addEventListener("change", e => { const id = P.currentSlideId(); kit.clipAudio = { ...(kit.clipAudio || {}), [id]: e.target.checked }; save(); });
+function syncSoundUI(id) { const cb = $("clipAudio"); if (cb) cb.checked = keepSound(id); }
 function syncClipUI() {
   const id = P.currentSlideId(), c = id && clips.get(id), info2 = $("clipInfo"); if (!info2) return;
   const has = !!(c && c.ready), pv = $("clipPreview");
   $("clipClear").hidden = !has; $("clipStartRow").hidden = !has;
   if (!has) { pv.removeAttribute("src"); info2.textContent = c ? "Loading the clip…" : "No clip. The reel uses the poster."; return; }
   if (pv.dataset.url !== c.url) { pv.src = c.url; pv.dataset.url = c.url; pv.addEventListener("loadedmetadata", () => layoutPreview(), { once: true }); }
-  layoutPreview();
+  layoutPreview(); syncSoundUI(id);
   const fr = clipFrame(id);
   for (const [el, v, txt] of [["clipX", fr.x, Math.round(fr.x * 100) + "%"], ["clipY", fr.y, Math.round(fr.y * 100) + "%"], ["clipZoom", fr.z, fr.z.toFixed(2) + "×"]]) {
     if (document.activeElement !== $(el)) $(el).value = v; $(el + "Out").textContent = txt;
@@ -780,7 +893,7 @@ $("clipFile").addEventListener("change", async e => {
 $("clipClear").addEventListener("click", async () => {
   const id = P.currentSlideId(), c = clips.get(id); if (!c) return;
   c.video.removeAttribute("src"); URL.revokeObjectURL(c.url); clips.delete(id); await P.idbPut("clip:" + id, null);
-  for (const k of ["clipStart", "clipEnd", "clipFrame"]) if (kit[k]) delete kit[k][id]; save(); syncClipUI(); soon();
+  for (const k of ["clipStart", "clipEnd", "clipFrame", "clipAudio"]) if (kit[k]) delete kit[k][id]; save(); syncClipUI(); soon();
 });
 for (const [el, key] of [["clipStart", "clipStart"], ["clipEnd", "clipEnd"]]) $(el).addEventListener("input", e => {
   const id = P.currentSlideId(), v = +e.target.value; kit[key] = { ...(kit[key] || {}), [id]: v }; save();
@@ -789,6 +902,6 @@ for (const [el, key] of [["clipStart", "clipStart"], ["clipEnd", "clipEnd"]]) $(
 });
 P.onDeckChange(() => { films().forEach(f => loadClip(f.id)); setTimeout(syncClipUI, 50); });
 
-window.Kit = { flush, hold: () => clearTimeout(saveT), refresh, assets, captions, letterboxd };
+window.Kit = { flush, hold: () => clearTimeout(saveT), refresh, assets, captions, letterboxd, withClipSound };
 setTimeout(() => { films().forEach(f => loadClip(f.id)); refresh(); syncClipUI(); }, 600);
 })();
