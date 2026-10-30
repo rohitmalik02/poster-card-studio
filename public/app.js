@@ -339,6 +339,42 @@ async function usePosterFile(file) {
 
 /* ---------------- canvas helpers ---------------- */
 const FILTER_OK = (() => { const t = document.createElement("canvas").getContext("2d"); if (typeof t.filter !== "string") return false; t.filter = "blur(2px)"; return t.filter === "blur(2px)"; })();
+// A real Gaussian-style blur (three box passes, the standard close approximation) plus the exact CSS saturate()
+// matrix, in plain JS, for browsers without canvas `filter` (Safari, and every iOS browser, since they all run on
+// WebKit). Works in full precision between passes so it lands on Chrome's result. Blurs the canvas in place.
+function blurCanvas(c, sigma, sat = 1) {
+  const w = c.width, h = c.height, x = c.getContext("2d", { willReadFrequently: true }), img = x.getImageData(0, 0, w, h), px = img.data;
+  let a = Float32Array.from(px), b = new Float32Array(px.length);
+  if (sigma > 0.5) {
+    const n = 3, wIdeal = Math.sqrt(12 * sigma * sigma / n + 1); let wl = Math.floor(wIdeal); if (wl % 2 === 0) wl--;
+    const m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
+    for (let k = 0; k < n; k++) { const r = ((k < m ? wl : wl + 2) - 1) / 2; boxPass(a, b, w, h, r, true); boxPass(b, a, w, h, r, false); }
+  }
+  if (sat !== 1) { // CSS saturate(): https://drafts.fxtf.org/filter-effects/#funcdef-filter-saturate
+    const s = sat;
+    const m0 = 0.213 + 0.787 * s, m1 = 0.715 - 0.715 * s, m2 = 0.072 - 0.072 * s, m3 = 0.213 - 0.213 * s, m4 = 0.715 + 0.285 * s, m5 = 0.072 - 0.072 * s, m6 = 0.213 - 0.213 * s, m7 = 0.715 - 0.715 * s, m8 = 0.072 + 0.928 * s;
+    for (let i = 0; i < a.length; i += 4) {
+      const r = a[i], g = a[i + 1], bl = a[i + 2];
+      a[i] = m0 * r + m1 * g + m2 * bl; a[i + 1] = m3 * r + m4 * g + m5 * bl; a[i + 2] = m6 * r + m7 * g + m8 * bl;
+    }
+  }
+  px.set(a); x.putImageData(img, 0, 0); return c; // Uint8ClampedArray rounds and clamps once, at the end
+}
+// One box-blur pass of radius r, horizontal or vertical, edges clamped
+function boxPass(src, dst, w, h, r, horiz) {
+  r = Math.max(0, Math.round(r)); const span = r * 2 + 1, len = horiz ? w : h, lines = horiz ? h : w, step = (horiz ? 1 : w) * 4;
+  for (let ln = 0; ln < lines; ln++) {
+    const base = (horiz ? ln * w : ln) * 4;
+    for (let ch = 0; ch < 4; ch++) {
+      const o = base + ch; let acc = 0;
+      for (let i = -r; i <= r; i++) acc += src[o + Math.min(len - 1, Math.max(0, i)) * step];
+      for (let i = 0; i < len; i++) {
+        dst[o + i * step] = acc / span;
+        acc += src[o + Math.min(len - 1, i + r + 1) * step] - src[o + Math.max(0, i - r) * step];
+      }
+    }
+  }
+}
 let K = 1; // device px per layout px for the render in progress
 let tooLong = false; // paragraph overflowed its space at the minimum readable size
 
@@ -659,11 +695,10 @@ function drawBackdrop(ctx) {
   const dw = iw * s, dh = ih * s, dx = (ow - dw) / 2, dy = (oh - dh) / 2 + (+b.shift) * (dh - oh - pad * 2) / 2;
   o.imageSmoothingQuality = "high";
   if (FILTER_OK) { o.filter = `blur(${blurPx}px) saturate(${b.sat})`; o.drawImage(src, dx, dy, dw, dh); o.filter = "none"; }
-  else {
-    // fallback: progressive downsample blur
-    const f = Math.max(1, blurPx / 2), tw = Math.max(4, Math.round(ow / f)), th = Math.max(4, Math.round(oh / f));
-    const t = document.createElement("canvas"); t.width = tw; t.height = th; const tx = t.getContext("2d");
-    tx.drawImage(src, dx / f, dy / f, dw / f, dh / f); o.imageSmoothingEnabled = true; o.drawImage(t, 0, 0, ow, oh);
+  else { // Safari / iOS: no canvas filter. Blur a margin beyond the frame too, as the filter does, then crop.
+    const m = Math.ceil(blurPx * 3), t = document.createElement("canvas"); t.width = ow + m * 2; t.height = oh + m * 2;
+    const tx = t.getContext("2d"); tx.fillStyle = baseColor; tx.fillRect(0, 0, t.width, t.height); tx.imageSmoothingQuality = "high";
+    tx.drawImage(src, dx + m, dy + m, dw, dh); blurCanvas(t, blurPx, +b.sat); o.drawImage(t, m, m, ow, oh, 0, 0, ow, oh);
   }
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(off, 0, 0, Wd, Hd);
 }
@@ -1235,7 +1270,7 @@ const deckData = () => deck.map((sl, i) => {
   return { ...c, id: sl.id, poster: (i === cur ? posterCanvas : imgs.get(sl.id)?.poster) || null };
 });
 window.PCS = {
-  RATIOS, FILTER_OK, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
+  RATIOS, FILTER_OK, blurCanvas, fontStr, wrapPlain, rrect, getGrain, loadImage, readFile, toast, slug,
   get state() { return state; }, preset: P, deckPosters, deckSlides, deckCount: () => deck.length,
   drawChromeText, setK: k => { K = k; }, capHeight, trackedWidth, drawTracked, setTitleTracking, clearTracking,
   extractPalette, rgbToHsl, hslToHex, idbPut, idbGet, downsized, schedule, renderDeck, selectCover, isCover: () => coverOn(), redraw: () => renderPreview(), deckData, makeZip, onDeckChange: fn => deckListeners.push(fn), currentSlideId: () => deck[cur]?.id,

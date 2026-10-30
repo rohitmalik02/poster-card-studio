@@ -152,8 +152,14 @@ function drawEssence(ctx, W, H, t = null) {
   const blur = (4 + hero.glass * 34) * dw / 1080, os = blur * 2.5;
   ctx.fillStyle = toHex(pal.reduce((a, b) => (lumOf(a.rgb) < lumOf(b.rgb) ? a : b)).rgb); ctx.fillRect(0, 0, dw, dh);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
-  if (P.FILTER_OK) ctx.filter = `blur(${blur}px) saturate(1.12)`;
-  ctx.drawImage(f.canvas, -os, -os, dw + os * 2, dh + os * 2); ctx.filter = "none";
+  if (P.FILTER_OK) { ctx.filter = `blur(${blur}px) saturate(1.12)`; ctx.drawImage(f.canvas, -os, -os, dw + os * 2, dh + os * 2); ctx.filter = "none"; }
+  else { // Safari / iOS: blur the small field itself (in its own pixels), then upscale it smoothly
+    const sc = f.w / (dw + os * 2), m = Math.ceil(blur * sc * 3), tmp = document.createElement("canvas");
+    tmp.width = f.w + m * 2; tmp.height = f.h + m * 2; const tx = tmp.getContext("2d");
+    tx.drawImage(f.canvas, -m, -m, f.w + m * 4, f.h + m * 4); tx.drawImage(f.canvas, m, m); // edges padded with a stretched copy
+    P.blurCanvas(tmp, blur * sc, 1.12);
+    ctx.drawImage(tmp, m, m, f.w, f.h, -os, -os, dw + os * 2, dh + os * 2);
+  }
   // glass: two faint diagonal reflections (they sweep back and forth when moving)
   const g = ctx.createLinearGradient(0, 0, dw, dh), sw = m * 0.04 * Math.sin(ph);
   g.addColorStop(0.3 + sw, "rgba(255,255,255,0)"); g.addColorStop(0.4 + sw, `rgba(255,255,255,${0.04 + 0.06 * hero.glass})`);

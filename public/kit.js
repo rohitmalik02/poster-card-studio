@@ -89,8 +89,13 @@ function backdrop(img, key, accent) {
   x.fillStyle = "#0b0a0d"; x.fillRect(0, 0, W, H);
   if (img) {
     const s = Math.max(W / img.width, H / img.height) * 1.35, dw = img.width * s, dh = img.height * s;
-    if (P.FILTER_OK) x.filter = "blur(70px) saturate(1.4)";
-    x.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh); x.filter = "none";
+    if (P.FILTER_OK) { x.filter = "blur(70px) saturate(1.4)"; x.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh); x.filter = "none"; }
+    else { // Safari / iOS: blur at an eighth of the size, then upscale smoothly
+      const m = 27, sm = document.createElement("canvas"); sm.width = W / 8 + m * 2; sm.height = H / 8 + m * 2; // margin = 3 sigma
+      const sx = sm.getContext("2d"); sx.fillStyle = "#0b0a0d"; sx.fillRect(0, 0, sm.width, sm.height);
+      sx.drawImage(img, (W - dw) / 16 + m, (H - dh) / 16 + m, dw / 8, dh / 8); P.blurCanvas(sm, 70 / 8, 1.4);
+      x.imageSmoothingQuality = "high"; x.drawImage(sm, m, m, W / 8, H / 8, 0, 0, W, H);
+    }
   }
   x.fillStyle = "rgba(0,0,0,0.42)"; x.fillRect(0, 0, W, H);
   const v = x.createRadialGradient(W / 2, H * 0.45, H * 0.2, W / 2, H * 0.5, H * 0.75);
@@ -252,6 +257,7 @@ function drawClip(ctx, v, blur = 0, fr = { x: 0.5, y: 0.5, z: 1 }) {
     const b = blurBuf.getContext("2d"), q = clipRect(v, 270, 480, fr);
     if (P.FILTER_OK) b.filter = "blur(5px)";
     b.drawImage(v, q.x, q.y, q.w, q.h); b.filter = "none";
+    if (!P.FILTER_OK) P.blurCanvas(blurBuf, 5); // Safari / iOS
     ctx.save(); ctx.globalAlpha = blur; ctx.imageSmoothingQuality = "high"; ctx.drawImage(blurBuf, -40, -70, W + 80, H + 140);
     ctx.globalAlpha = 0.4 * blur; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
   }
