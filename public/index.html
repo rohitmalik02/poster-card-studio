@@ -118,7 +118,16 @@
       </details>
 
       <details class="cover-hide" open>
-        <summary>Poster</summary>
+        <summary>Template</summary>
+        <div class="sec">
+          <div class="field"><span class="lbl">This slide is a</span><div class="seg" id="kindSeg"></div></div>
+          <div class="sec-inner swap-only" id="swapCtl"></div>
+          <input type="file" id="swapFile" accept="image/*" hidden>
+        </div>
+      </details>
+
+      <details class="cover-hide" open>
+        <summary>Poster <span class="swap-only tag">the main pick</span></summary>
         <div class="sec">
           <div class="uploader">
             <label class="btn primary" for="posterFile">Upload poster</label>
@@ -148,7 +157,7 @@
             <div class="field"><label for="genre">Genre</label><input type="text" id="genre" data-k="genre"></div>
           </div>
           <div class="field"><label for="cast">Cast <span>two names reads best</span></label><input type="text" id="cast" data-k="cast" placeholder="Ethan Hawke, Julie Delpy"></div>
-          <div class="field">
+          <div class="field film-only">
             <label for="rating">Your rating <output id="ratingOut"></output></label>
             <input type="range" id="rating" data-k="rating" min="0" max="5" step="0.5">
           </div>
@@ -185,7 +194,7 @@
             <label><input type="checkbox" id="showKicker" data-k="show.kicker"> Eyebrow</label>
             <label><input type="checkbox" id="showMeta" data-k="show.meta"> Year &amp; credits</label>
             <label><input type="checkbox" id="showCast" data-k="show.cast"> Cast</label>
-            <label><input type="checkbox" id="showStars" data-k="show.stars"> Stars</label>
+            <label class="film-only"><input type="checkbox" id="showStars" data-k="show.stars"> Stars</label>
             <label><input type="checkbox" id="showBlurb" data-k="show.blurb"> Paragraph</label>
             <label><input type="checkbox" id="showHandle" data-k="show.handle"> Handle</label>
           </div>
@@ -198,7 +207,7 @@
         <summary>Format &amp; type</summary>
         <div class="sec">
           <div class="field"><span class="lbl">Post shape</span><div class="seg" id="ratioSeg"></div></div>
-          <div class="field cover-hide"><span class="lbl">Layout</span><div class="seg" id="layoutSeg"></div></div>
+          <div class="field cover-hide film-only"><span class="lbl">Layout</span><div class="seg" id="layoutSeg"></div></div>
           <div class="field"><span class="lbl">Type style</span><div class="presets" id="presetGrid"></div></div>
           <div class="toggles"><label><input type="checkbox" id="chrome" data-k="chrome"> Chrome title (comes with Zine, works on any style)</label></div>
           <div class="field cover-hide">

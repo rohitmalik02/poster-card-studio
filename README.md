@@ -22,6 +22,16 @@ A browser tool for making Instagram film-recommendation posts. Load a 2:3 poster
 - Work autosaves in the browser (localStorage for words and settings, IndexedDB for images).
 - **Save project** downloads the whole carousel as one `.json` file: slides, posters, backdrops, cover and look. **Open project** (or dropping the file on the page) loads it back, replacing what's open. Use it for backups, for moving between devices, and for keeping one file per carousel.
 
+## Swap template
+
+Any slide can be a **Swap** instead of a film postcard ("if you liked X, watch Y"). Pick it under Template. The main pick is the slide's own poster and Words; the shows you liked, and any extra picks, get their own posters there.
+
+- **1 v 1:** both posters at the same size, the pick marked with an accent ring, a label under each, what they share as chips, then the paragraph.
+- **Grid:** the shows you liked in a row, the picks below, every poster the same size, set by the longer row. Up to four in each row.
+- **List:** the pick cards over a still of the show you liked (the slide's Backdrop still) that fades into the backdrop. Drag the preview, or use the sliders, to frame it. The cards blur what's behind them.
+
+Swaps never show stars. Their posters go into project files with everything else.
+
 ## Kit (experimental)
 
 In Carousel mode, the Kit panel turns the finished project into posts that point back to it:

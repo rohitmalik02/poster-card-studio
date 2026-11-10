@@ -177,7 +177,7 @@ async function setPoster(src, { persist = true, keepAccent = false } = {}) {
    Each slide keeps its own words, poster, backdrop still and accent; the look is shared.
    The current slide's words live in `state` (so every control keeps working); the rest wait in `deck`. */
 const DECK_KEY = "poster-card-studio:deck:v1";
-const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "cast", "runtime", "genre", "rating", "blurb", "accent", "palette", "reelLine", "reasons", "trivia"];
+const CONTENT_KEYS = ["sample", "kicker", "title", "year", "director", "cast", "runtime", "genre", "rating", "blurb", "accent", "palette", "reelLine", "reasons", "trivia", "kind", "swap"];
 const TEXT_DEFAULTS = ["cast", "reelLine", "reasons", "trivia"]; // optional fields slides saved earlier may lack
 const uid = () => Math.random().toString(36).slice(2, 10);
 const pick = o => Object.fromEntries(CONTENT_KEYS.map(k => [k, clone(o[k] ?? null)]));
@@ -194,6 +194,7 @@ function loadSlide(i) {
   for (const k of CONTENT_KEYS) if (sl[k] !== undefined) state[k] = clone(sl[k]); else if (TEXT_DEFAULTS.includes(k)) state[k] = ""; // fields newer than the slide
   if (!state.accent) state.accent = "#e9b65a";
   if (!Array.isArray(state.palette)) state.palette = [];
+  state.kind = sl.kind === "swap" ? "swap" : "film"; state.swap = normSwap(sl.swap); // slides from before the swap template are films
   const im = imgs.get(sl.id) || {};
   posterCanvas = im.poster || null; bgImage = im.bg || null; baseColor = im.base || "#141216";
 }
@@ -221,8 +222,10 @@ function selectSlide(i) {
 function addSlide() {
   if (deck.length >= 20) { toast("Instagram carousels stop at 20 slides."); return; }
   stash();
+  const sw = newSwap(state.swap?.style); sw.likedLabel = state.swap?.likedLabel ?? sw.likedLabel; sw.watchLabel = state.swap?.watchLabel ?? sw.watchLabel;
   deck.splice(cur + 1, 0, { id: uid(), sample: null, kicker: state.kicker, title: "New film", year: "", director: "", runtime: "", genre: "",
-    rating: 0, blurb: "Why it's worth watching, in one or two lines.", cast: "", reelLine: "", reasons: "", trivia: "", accent: state.accent, palette: state.palette });
+    rating: 0, blurb: "Why it's worth watching, in one or two lines.", cast: "", reelLine: "", reasons: "", trivia: "", accent: state.accent, palette: state.palette,
+    kind: state.kind, swap: sw });
   selectSlide(cur + 1);
   toast("Slide added. Drop a poster on it.");
 }
@@ -230,6 +233,7 @@ function deleteSlide(i) {
   if (deck.length <= 1) { toast("A carousel needs at least one slide."); return; }
   stash(); const [gone] = deck.splice(i, 1);
   imgs.delete(gone.id); idbPut(`deck:${gone.id}`, null); idbPut(`deck:${gone.id}:bg`, null);
+  for (const id of swapIds(gone.swap)) { itemPosters.delete(id); idbPut(`swap:${id}`, null); }
   cur = Math.min(i === cur ? i : cur > i ? cur - 1 : cur, deck.length - 1); loadSlide(cur);
   document.getElementById("clearBg").hidden = !bgImage;
   syncInputs(); renderSamples(); renderSwatches(); renderDeck(); schedule();
@@ -661,20 +665,21 @@ function drawChromeText(ctx, text, x, y, size, capH, align, glint) {
 }
 
 /* ---------------- poster + backdrop ---------------- */
-function drawPoster(ctx, x, y, w, h) {
-  const r = +state.poster.radius;
+// src: the slide's poster by default, or a swap item's. opt.glow: accent glow; opt.radius / opt.shadow override the look's poster frame.
+function drawPoster(ctx, x, y, w, h, src = posterCanvas, opt = {}) {
+  const r = opt.radius ?? +state.poster.radius, sh = (opt.shadow ?? 1) * +state.poster.shadow;
   ctx.save();
-  if (+state.poster.glow > 0) {
+  if (opt.glow !== false && +state.poster.glow > 0) {
     ctx.shadowColor = rgba(state.accent, 0.6 * state.poster.glow); ctx.shadowBlur = 150 * K; ctx.fillStyle = "#000";
     rrect(ctx, x, y, w, h, r); ctx.fill();
   }
-  if (+state.poster.shadow > 0) {
-    ctx.shadowColor = `rgba(0,0,0,${0.75 * state.poster.shadow})`; ctx.shadowBlur = 90 * K; ctx.shadowOffsetY = 34 * K; ctx.fillStyle = "#000";
+  if (sh > 0) {
+    ctx.shadowColor = `rgba(0,0,0,${0.75 * sh})`; ctx.shadowBlur = 90 * K * Math.min(1, w / 400 + 0.3); ctx.shadowOffsetY = 34 * K * Math.min(1, w / 400 + 0.3); ctx.fillStyle = "#000";
     rrect(ctx, x, y, w, h, r); ctx.fill();
   }
   ctx.restore();
   ctx.save(); rrect(ctx, x, y, w, h, r); ctx.clip();
-  if (posterCanvas) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(posterCanvas, x, y, w, h); }
+  if (src) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(src, x, y, w, h); }
   else { ctx.fillStyle = "#26232a"; ctx.fillRect(x, y, w, h); }
   ctx.restore();
   if (state.poster.border) { ctx.strokeStyle = "rgba(255,255,255,0.16)"; ctx.lineWidth = 1.5; rrect(ctx, x + 0.75, y + 0.75, w - 1.5, h - 1.5, Math.max(0, r - 0.75)); ctx.stroke(); }
@@ -846,6 +851,7 @@ function render(canvas, outW) {
   drawBackdrop(ctx);
   drawGrain(ctx);
   ctx.setTransform(K, 0, 0, K, 0, 0);
+  if (isSwap()) { drawShades(ctx, W, H, "stacked"); drawSwap(ctx, W, H); drawCornerHandle(ctx, W, H); return "swap"; }
   const plan = planLayout(ctx, W, H);
   drawShades(ctx, W, H, plan.shade);
   plan.draw();
@@ -862,6 +868,290 @@ function drawCornerHandle(ctx, W, H) {
   ctx.font = fontStr(P().label, size); ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.textBaseline = "alphabetic";
   const y = pos[0] === "t" ? m + capHeight(ctx) : H - m;
   drawTracked(ctx, text, align === "left" ? m : align === "right" ? W - m : W / 2, y, P().label.track * 0.4, size, align);
+}
+
+/* ---------------- swap template: "if you liked X, watch Y" ----------------
+   A slide is either a film postcard or a swap. The main pick is the slide's own poster and Words, so the cover,
+   the kit and the accent keep working; the shows you liked and any extra picks are items with their own posters
+   (IndexedDB "swap:<id>"). Three layouts: 1 v 1, a grid (m liked over n picks) and a list over a fading still. */
+const SWAP_STYLES = { pair: { name: "1 v 1", note: "one liked, one pick" }, grid: { name: "Grid", note: "liked above, picks below" }, list: { name: "List", note: "picks in rows over a still" } };
+const SWAP_MAX = 4, ITEM_ID = /^[a-z0-9]{1,16}$/;
+const itemPosters = new Map(); // item id -> 2:3 canvas
+const isSwap = () => state.kind === "swap";
+const str = v => (typeof v === "string" ? v : "");
+const num = (v, lo, hi, d) => (v === null || v === undefined || v === "" || !Number.isFinite(+v) ? d : Math.min(hi, Math.max(lo, +v)));
+function newSwap(style = "pair") {
+  return { style: SWAP_STYLES[style] ? style : "pair", liked: [{ id: uid(), title: "" }], picks: [], traits: "", likedLabel: "If you liked", watchLabel: "Watch next",
+    headline: "", sub: "", still: { x: 0.5, y: 0.5, zoom: 1, size: 0.62, fade: 0.6 } };
+}
+function normSwap(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return newSwap();
+  const items = (a, more) => (Array.isArray(a) ? a : []).filter(it => it && typeof it === "object" && ITEM_ID.test(it.id)).slice(0, SWAP_MAX)
+    .map(it => more ? { id: it.id, title: str(it.title), year: str(it.year), details: str(it.details), line: str(it.line) } : { id: it.id, title: str(it.title) });
+  const liked = items(s.liked), st = s.still && typeof s.still === "object" ? s.still : {};
+  return { style: SWAP_STYLES[s.style] ? s.style : "pair", liked: liked.length ? liked : [{ id: uid(), title: "" }], picks: items(s.picks, true).slice(0, SWAP_MAX - 1),
+    traits: str(s.traits), likedLabel: typeof s.likedLabel === "string" ? s.likedLabel : "If you liked", watchLabel: typeof s.watchLabel === "string" ? s.watchLabel : "Watch next",
+    headline: str(s.headline), sub: str(s.sub),
+    still: { x: num(st.x, 0, 1, 0.5), y: num(st.y, 0, 1, 0.5), zoom: num(st.zoom, 1, 3, 1), size: num(st.size, 0.4, 1, 0.62), fade: num(st.fade, 0.1, 1, 0.6) } };
+}
+const swapIds = s => (s && typeof s === "object" ? [...(Array.isArray(s.liked) ? s.liked : []), ...(Array.isArray(s.picks) ? s.picks : [])] : [])
+  .map(it => it && it.id).filter(id => typeof id === "string" && ITEM_ID.test(id));
+async function loadItemPoster(id) {
+  const src = await idbGet(`swap:${id}`);
+  if (src) { try { itemPosters.set(id, cropTo23(await loadImage(src))); } catch (e) { /* ignore */ } }
+}
+const likedList = () => state.swap.liked.map(l => ({ ...l, poster: itemPosters.get(l.id) || null }));
+// The main pick first (the slide's own poster and words), then the extra picks.
+const pickList = () => [
+  { title: state.title, year: state.year, details: [state.runtime, state.genre].map(s => (s || "").trim()).filter(Boolean).join(" · "), line: state.blurb, poster: posterCanvas, main: true },
+  ...state.swap.picks.map(k => ({ ...k, poster: itemPosters.get(k.id) || null })),
+];
+
+const upper = t => (P().title.upper ? t.toUpperCase() : t);
+const swapHandle = () => (state.show.handle && state.handlePos === "with" ? (state.handle || "").trim() : "");
+function capsLabel(ctx, text, x, top, size, color, align, track = P().label.track) {
+  ctx.font = fontStr(P().label, size); ctx.fillStyle = color; ctx.textBaseline = "alphabetic";
+  drawTracked(ctx, text.toUpperCase(), x, top + size / 2 + capHeight(ctx) / 2, track, size, align);
+}
+function handleAt(ctx, text, x, base, align) {
+  ctx.font = fontStr(P().label, 17); ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.textBaseline = "alphabetic";
+  drawTracked(ctx, text, x, base, P().label.track * 0.4, 17, align);
+}
+function titleLines(ctx, fit, x, top, align) {
+  const p = P(), lh = fit.size * p.title.lh;
+  ctx.save(); ctx.font = fontStr(p.title, fit.size); setTitleTracking(ctx, p.title, fit.size);
+  ctx.fillStyle = "#ffffff"; ctx.textAlign = align; ctx.textBaseline = "alphabetic";
+  ctx.shadowColor = "rgba(0,0,0,0.35)"; ctx.shadowBlur = 24 * K; ctx.shadowOffsetY = 3 * K;
+  const ch = capHeight(ctx);
+  fit.lines.forEach((ln, i) => ctx.fillText(ln, x, top + i * lh + lh / 2 + ch / 2));
+  ctx.restore(); clearTracking(ctx);
+  return fit.lines.length * lh;
+}
+// Rich text (with *accent* phrases) fitted into maxLines, shrinking to minSize, then cut with an ellipsis.
+function fitRich(ctx, text, maxW, size, minSize, lhMul, maxLines) {
+  const p = P(); let out;
+  for (let s = size; s >= minSize; s--) {
+    ctx.font = fontStr(p.body, s); const wr = wrapRich(ctx, parseRich(text), maxW);
+    out = { ...wr, size: s, lh: s * lhMul };
+    if (wr.lines.length <= maxLines) break;
+  }
+  if (out.lines.length > maxLines) {
+    out.lines = out.lines.slice(0, maxLines);
+    const last = out.lines[maxLines - 1], w = last.words[last.words.length - 1];
+    if (w) { const e = { t: "…", em: false, w: ctx.measureText("…").width }; w.parts.push(e); last.w += e.w; }
+  }
+  out.h = out.lines.length ? (out.lines.length - 1) * out.lh + out.size : 0;
+  return out;
+}
+function drawRich(ctx, rb, x, top, align, color = "rgba(255,255,255,0.88)") {
+  ctx.font = fontStr(P().body, rb.size); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  rb.lines.forEach((ln, i) => {
+    let sx = align === "center" ? x - ln.w / 2 : align === "right" ? x - ln.w : x;
+    const base = top + i * rb.lh + rb.size * 0.8;
+    for (const w of ln.words) { for (const pt of w.parts) { ctx.fillStyle = pt.em ? state.accent : color; ctx.fillText(pt.t, sx, base); sx += pt.w; } sx += rb.space; }
+  });
+}
+// The pick gets a selection ring: an accent line set a little way out from the poster.
+function drawRing(ctx, x, y, w, h) {
+  const o = 10; ctx.save(); ctx.strokeStyle = state.accent; ctx.lineWidth = 3;
+  rrect(ctx, x - o, y - o, w + 2 * o, h + 2 * o, +state.poster.radius + o); ctx.stroke(); ctx.restore();
+}
+// A caps label between two hairlines that fade in towards it.
+function sectionRule(ctx, text, x0, x1, top, size) {
+  const p = P(), t = text.toUpperCase(), cx = (x0 + x1) / 2, mid = top + size / 2, gap = 22;
+  ctx.font = fontStr(p.label, size);
+  const half = t ? trackedWidth(ctx, t, p.label.track, size) / 2 + gap : 0;
+  const a = ctx.createLinearGradient(x0, 0, cx - half, 0); a.addColorStop(0, rgba(state.accent, 0)); a.addColorStop(1, state.accent);
+  ctx.fillStyle = a; ctx.fillRect(x0, mid - 0.75, cx - half - x0, 1.5);
+  const b = ctx.createLinearGradient(cx + half, 0, x1, 0); b.addColorStop(0, state.accent); b.addColorStop(1, rgba(state.accent, 0));
+  ctx.fillStyle = b; ctx.fillRect(cx + half, mid - 0.75, x1 - cx - half, 1.5);
+  if (t) capsLabel(ctx, t, cx, top, size, state.accent, "center");
+}
+const splitList = s => str(s).split(/\s*(?:\n|,|·)\s*/).map(t => t.trim()).filter(Boolean).slice(0, 5);
+function buildChips(ctx, list, maxW, size = 19) {
+  if (!list.length) return { rows: [], h: 0 };
+  ctx.font = fontStr(P().body, size);
+  const padX = 20, ch = size + 22, g = 12, rows = [[]]; let w = 0;
+  for (const t of list) {
+    const cw = Math.min(maxW, ctx.measureText(t).width + padX * 2), row = rows[rows.length - 1], nw = row.length ? w + g + cw : cw;
+    if (nw > maxW && row.length) { rows.push([{ t, w: cw }]); w = cw; } else { row.push({ t, w: cw }); w = nw; }
+  }
+  rows.forEach(r => { r.w = r.reduce((a, c) => a + c.w, 0) + g * (r.length - 1); });
+  return { rows, h: rows.length * ch + (rows.length - 1) * g, ch, g, size, padX };
+}
+function drawChips(ctx, c, cx, top) {
+  ctx.font = fontStr(P().body, c.size); ctx.textBaseline = "middle"; ctx.textAlign = "center";
+  c.rows.forEach((r, i) => {
+    let x = cx - r.w / 2; const y = top + i * (c.ch + c.g);
+    for (const chip of r) {
+      ctx.strokeStyle = state.accent; ctx.lineWidth = 1.5; rrect(ctx, x + 0.75, y + 0.75, chip.w - 1.5, c.ch - 1.5, c.ch / 2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.92)"; ctx.fillText(chip.t, x + chip.w / 2, y + c.ch / 2 + 1, chip.w - c.padX);
+      x += chip.w + c.g;
+    }
+  });
+  ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+}
+
+function drawSwap(ctx, W, H) {
+  if (state.swap.style === "grid") drawSwapGrid(ctx, W, H);
+  else if (state.swap.style === "list") drawSwapList(ctx, W, H);
+  else drawSwapPair(ctx, W, H);
+}
+
+// 1 v 1: eyebrow, the pick's title and credits; the two posters at the same size, the pick ringed;
+// a label under each; shared traits as chips; the paragraph; the handle. No stars.
+function drawSwapPair(ctx, W, H) {
+  const sw = state.swap, pad = Math.round(Math.min(W, H) * 0.075), colW = Math.min(W - 2 * pad, 940), cx = W / 2;
+  const top = buildTop(ctx, colW, { maxLines: 2, cap: H / W > 1.5 ? 116 : 108 });
+  const stars = state.show.stars; state.show.stars = false;
+  const bottom = buildBottom(ctx, Math.min(colW, 860), H * 0.2);
+  state.show.stars = stars;
+  const chips = buildChips(ctx, splitList(sw.traits), colW), chipsH = chips.h ? chips.h + 30 : 0;
+  const capGap = 24, capS = 15, gap = Math.round(H * 0.03), pg = Math.max(60, Math.round(W * 0.055));
+  const y0 = pad + top.h + gap, y1 = H - pad - bottom.h - chipsH - gap;
+  const ph = Math.max(60, Math.min(y1 - y0 - capGap - capS - 20, (colW - pg) / 2 * 1.5) * +state.poster.scale), pw = ph * 2 / 3;
+  const py = y0 + (y1 - y0 - (ph + capGap + capS)) / 2, lx = cx - pg / 2 - pw, rx = cx + pg / 2;
+  drawPoster(ctx, lx, py, pw, ph, likedList()[0]?.poster || null, { glow: false });
+  drawPoster(ctx, rx, py, pw, ph);
+  drawRing(ctx, rx, py, pw, ph);
+  if (sw.likedLabel.trim()) capsLabel(ctx, sw.likedLabel, lx + pw / 2, py + ph + capGap, capS, "rgba(255,255,255,0.6)", "center");
+  if (sw.watchLabel.trim()) capsLabel(ctx, sw.watchLabel, rx + pw / 2, py + ph + capGap, capS, state.accent, "center");
+  drawBlock(ctx, top, cx, pad, "center");
+  if (chips.h) drawChips(ctx, chips, cx, H - pad - bottom.h - chipsH);
+  drawBlock(ctx, bottom, cx, H - pad - bottom.h, "center");
+}
+
+// Grid: the shows you liked in a row above, the picks below, every poster the same size
+// (set by the longer row), each section introduced by a caps label between hairlines.
+function drawSwapGrid(ctx, W, H) {
+  const sw = state.swap, p = P(), pad = Math.round(Math.min(W, H) * 0.075), colW = W - 2 * pad, cx = W / 2;
+  const liked = likedList(), picks = pickList(), n = Math.max(liked.length, picks.length), g = Math.round(colW * 0.03);
+  const kick = state.show.kicker && (state.kicker || "").trim(), handle = swapHandle();
+  const ebH = kick ? 20 + 30 : 0, ruleS = 20, rg = 26, handleH = handle ? 17 + 30 : 0, likedGap = 12, pickGap = 14, sectGap = 40;
+  const meta = k => [k.year, k.details].map(s => (s || "").trim()).filter(Boolean).join(" · ").toUpperCase();
+  const measure = pw => {
+    const tS = Math.max(24, Math.min(42, pw * 0.15)), lS = Math.max(15, Math.min(20, pw * 0.074)), slot = pw + g * 0.8;
+    const likedT = liked.map(l => l.title.trim() ? fitTitle(ctx, upper(l.title.trim()), slot, 2, tS * 0.9, tS * 0.6, p.title) : null);
+    const pickT = picks.map(k => (k.title || "").trim() ? fitTitle(ctx, upper(k.title.trim()), slot, 2, tS, tS * 0.65, p.title) : null);
+    const pickL = picks.map(k => (k.line || "").trim() ? fitRich(ctx, k.line.trim(), slot, lS, 14, 1.4, 4) : null);
+    const th = f => (f ? f.lines.length * f.size * p.title.lh : 0);
+    return { slot, likedT, pickT, pickL, lH: Math.max(0, ...likedT.map(th)), kH: Math.max(0, ...pickT.map(th)),
+      metaH: picks.some(meta) ? 13 + 12 : 0, lineH: Math.max(0, ...pickL.map(r => (r ? r.h + 12 : 0))) };
+  };
+  let pw = Math.min((colW - g * (n - 1)) / n, colW * 0.36), m = measure(pw);
+  const fixed = () => ebH + 2 * (ruleS + rg) + likedGap + m.lH + sectGap + pickGap + m.kH + m.metaH + m.lineH + handleH;
+  for (let i = 0; i < 3 && fixed() + 3 * pw > H - 2 * pad; i++) { pw = Math.max(60, (H - 2 * pad - fixed()) / 3); m = measure(pw); }
+  const ph = pw * 1.5, mid = fixed() - ebH - handleH + 2 * ph;
+  let y = pad + ebH + Math.max(0, (H - 2 * pad - ebH - handleH - mid) / 2);
+  if (kick) capsLabel(ctx, kick, cx, pad, 20, state.accent, "center");
+  const xs = k => { const total = k * pw + (k - 1) * g; return Array.from({ length: k }, (_, i) => cx - total / 2 + i * (pw + g)); };
+  sectionRule(ctx, sw.likedLabel.trim(), pad, W - pad, y, ruleS); y += ruleS + rg;
+  xs(liked.length).forEach((x, i) => {
+    drawPoster(ctx, x, y, pw, ph, liked[i].poster, { glow: false, shadow: 0.7 });
+    if (m.likedT[i]) titleLines(ctx, m.likedT[i], x + pw / 2, y + ph + likedGap, "center");
+  });
+  y += ph + likedGap + m.lH + sectGap;
+  sectionRule(ctx, sw.watchLabel.trim(), pad, W - pad, y, ruleS); y += ruleS + rg;
+  xs(picks.length).forEach((x, i) => {
+    const k = picks[i];
+    drawPoster(ctx, x, y, pw, ph, k.poster, { glow: false, shadow: 0.8 });
+    let ty = y + ph + pickGap;
+    if (m.pickT[i]) titleLines(ctx, m.pickT[i], x + pw / 2, ty, "center");
+    ty += m.kH;
+    if (m.metaH && meta(k)) {
+      // drop credits from the end until the line fits its column, as the postcard's credit line does
+      let txt = meta(k); ctx.font = fontStr(p.label, 13);
+      while (trackedWidth(ctx, txt, p.label.track * 0.9, 13) > m.slot && txt.includes("·")) txt = txt.slice(0, txt.lastIndexOf("·")).trim();
+      capsLabel(ctx, txt, x + pw / 2, ty + 12, 13, "rgba(255,255,255,0.6)", "center", p.label.track * 0.9);
+    }
+    ty += m.metaH;
+    if (m.pickL[i]) drawRich(ctx, m.pickL[i], x + pw / 2, ty + 12, "center", "rgba(255,255,255,0.86)");
+  });
+  if (handle) handleAt(ctx, handle, cx, H - pad, "center");
+}
+
+// List: the still (the slide's backdrop still, else the liked show's poster) large at the top, fading into the
+// backdrop; a headline over it; the picks as frosted cards that blur whatever is behind them.
+function drawSwapList(ctx, W, H) {
+  const sw = state.swap, st = sw.still, p = P(), pad = Math.round(Math.min(W, H) * 0.075), colW = W - 2 * pad;
+  const liked = likedList(), picks = pickList(), src = bgImage || liked[0]?.poster || null, fh = H * st.size;
+  if (src) drawFeature(ctx, src, W, fh, st);
+  let y = pad;
+  const kick = state.show.kicker && (state.kicker || "").trim();
+  if (kick) { capsLabel(ctx, kick, pad, y, 20, state.accent, "left"); y += 20 + 20; }
+  const lt = liked[0]?.title.trim(), head = sw.headline.trim() || (lt ? `Loved ${lt}?` : "");
+  if (head) y += titleLines(ctx, fitTitle(ctx, upper(head), colW, 2, Math.min(p.title.max, 112), 48, p.title), pad, y, "left");
+  if (sw.sub.trim()) {
+    const f = { ...p.title, style: "italic" }, s = 36; ctx.font = fontStr(f, s);
+    const lines = wrapPlain(ctx, sw.sub.trim(), colW * 0.72).slice(0, 2);
+    ctx.save(); ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.textAlign = "left"; ctx.shadowColor = "rgba(0,0,0,0.7)"; ctx.shadowBlur = 20 * K;
+    y += 12; lines.forEach((ln, i) => ctx.fillText(ln, pad, y + i * s * 1.25 + s * 0.85)); ctx.restore();
+    y += lines.length * s * 1.25;
+  }
+  const handle = swapHandle(), handleH = handle ? 17 + 26 : 0, cg = 18, c = picks.length, bottom = H - pad - handleH;
+  const cardH = Math.max(120, Math.min(265, (bottom - y - 44 - cg * (c - 1)) / c));
+  const snap = blurSnapshot(ctx, 22);
+  picks.forEach((k, i) => drawCard(ctx, k, pad, bottom - c * cardH - (c - 1) * cg + i * (cardH + cg), colW, cardH, snap));
+  if (handle) handleAt(ctx, handle, W - pad, H - pad, "right");
+}
+function drawFeature(ctx, src, W, fh, st) {
+  const cw = Math.max(2, Math.round(W * K)), ch = Math.max(2, Math.round(fh * K));
+  const off = document.createElement("canvas"); off.width = cw; off.height = ch; const o = off.getContext("2d");
+  // At least 20% taller than its area, so a wide still can always move up and down as well as sideways.
+  const iw = src.width, ih = src.height, s = Math.max(cw / iw, ch * 1.2 / ih) * st.zoom, dw = iw * s, dh = ih * s;
+  o.imageSmoothingQuality = "high"; o.drawImage(src, (cw - dw) * st.x, (ch - dh) * st.y, dw, dh);
+  o.fillStyle = "rgba(0,0,0,0.12)"; o.fillRect(0, 0, cw, ch);
+  // Shade behind the headline: darker at the top and on the left. Drawn here, before the fade, so it fades out
+  // with the still instead of stopping in a straight line where the still ends.
+  let sh = o.createLinearGradient(0, 0, 0, ch * 0.7); sh.addColorStop(0, "rgba(10,8,8,0.6)"); sh.addColorStop(1, "rgba(10,8,8,0)");
+  o.fillStyle = sh; o.fillRect(0, 0, cw, ch * 0.7);
+  sh = o.createLinearGradient(0, 0, cw * 0.75, 0); sh.addColorStop(0, "rgba(10,8,8,0.35)"); sh.addColorStop(1, "rgba(10,8,8,0)");
+  o.fillStyle = sh; o.fillRect(0, 0, cw * 0.75, ch);
+  // fade: solid down to (1 - fade), then an eased ramp to clear at the bottom of the image
+  o.globalCompositeOperation = "destination-in";
+  const g = o.createLinearGradient(0, 0, 0, ch), a = 1 - st.fade;
+  g.addColorStop(0, "#000");
+  for (let i = 0; i <= 12; i++) { const t = i / 12, e = t * t * (3 - 2 * t); g.addColorStop(a + (1 - a) * t, `rgba(0,0,0,${(1 - e).toFixed(3)})`); }
+  o.fillStyle = g; o.fillRect(0, 0, cw, ch);
+  ctx.drawImage(off, 0, 0, W, fh);
+}
+// What the frosted cards show through them: the post so far, blurred (quarter size, then scaled back up).
+function blurSnapshot(ctx, radius) {
+  const c = ctx.canvas, q = 0.25, w = Math.max(2, Math.round(c.width * q)), h = Math.max(2, Math.round(c.height * q));
+  const s = document.createElement("canvas"); s.width = w; s.height = h; const x = s.getContext("2d"), r = radius * K * q;
+  if (FILTER_OK) { x.filter = `blur(${r}px)`; x.drawImage(c, 0, 0, w, h); x.filter = "none"; }
+  else { x.drawImage(c, 0, 0, w, h); blurCanvas(s, r); }
+  return s;
+}
+function drawCard(ctx, k, x, y, w, h, snap) {
+  const p = P(), r = 28;
+  ctx.save(); rrect(ctx, x, y, w, h, r); ctx.clip();
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingQuality = "high"; ctx.drawImage(snap, 0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
+  ctx.fillStyle = "rgba(16,12,12,0.5)"; ctx.fillRect(x, y, w, h); ctx.restore();
+  ctx.strokeStyle = "rgba(255,255,255,0.14)"; ctx.lineWidth = 1.5; rrect(ctx, x + 0.75, y + 0.75, w - 1.5, h - 1.5, r); ctx.stroke();
+  const ip = Math.round(Math.max(14, h * 0.076)), ph = h - 2 * ip, pw = ph * 2 / 3;
+  drawPoster(ctx, x + ip, y + ip, pw, ph, k.poster, { glow: false, radius: 10, shadow: 0.5 });
+  const tx = x + ip + pw + 30, tw = x + w - 30 - tx, f = Math.min(1, h / 265);
+  const title = (k.title || "").trim() ? fitTitle(ctx, upper(k.title.trim()), tw, 1, Math.max(30, Math.round(56 * f)), 30, p.title) : null;
+  let line = (k.line || "").trim() ? fitRich(ctx, k.line.trim(), tw, Math.round(22 * Math.max(0.85, f)), 17, 1.42, h >= 220 ? 3 : 2) : null;
+  const pillFont = { ...p.body, weight: 600 }, pills = [k.year, ...str(k.details).split("·")].map(s => (s || "").trim()).filter(Boolean);
+  ctx.font = fontStr(pillFont, 16);
+  const pw2 = []; let used = 0;
+  for (const t of pills) { const pwid = ctx.measureText(t).width + 28; if (used + pwid > tw) break; pw2.push({ t, w: pwid }); used += pwid + 8; }
+  const tH = title ? title.lines.length * title.size * p.title.lh : 0, pillH = pw2.length ? 32 : 0;
+  let total = tH + (line ? 12 + line.h : 0) + (pillH ? 14 + pillH : 0);
+  if (total > h - 2 * ip && line) { line = null; total = tH + (pillH ? 14 + pillH : 0); }
+  let ty = y + (h - total) / 2;
+  if (title) ty += titleLines(ctx, title, tx, ty, "left");
+  if (line) { drawRich(ctx, line, tx, ty + 12, "left", "rgba(255,255,255,0.85)"); ty += 12 + line.h; }
+  if (pillH) {
+    ty += 14; let px = tx; ctx.font = fontStr(pillFont, 16); ctx.textBaseline = "middle"; ctx.textAlign = "center";
+    for (const pl of pw2) {
+      ctx.strokeStyle = "rgba(243,236,224,0.24)"; ctx.lineWidth = 1.5; rrect(ctx, px + 0.75, ty + 0.75, pl.w - 1.5, pillH - 1.5, pillH / 2); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillText(pl.t, px + pl.w / 2, ty + pillH / 2 + 1); px += pl.w + 8;
+    }
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+  }
 }
 
 /* ---------------- preview ---------------- */
@@ -888,7 +1178,7 @@ function renderPreview() {
   const used = render(preview, cw * dpr);
   const slideInfo = document.body.dataset.mode === "carousel" ? ` · slide <b>${cur + 1}/${deck.length}</b>` : "";
   document.getElementById("specs").innerHTML =
-    `<b>${state.ratio}</b> ${R.name} · ${LAYOUTS[used].name}${slideInfo} · exports <b>${ew} × ${eh}</b>`;
+    `<b>${state.ratio}</b> ${R.name} · ${used === "swap" ? "Swap " + SWAP_STYLES[state.swap.style].name : LAYOUTS[used].name}${slideInfo} · exports <b>${ew} × ${eh}</b>`;
   document.documentElement.style.setProperty("--accent", state.accent || "#e9b65a");
   updateWordCount();
 }
@@ -972,6 +1262,8 @@ function seg(containerId, entries, key, label) {
   }
 }
 function renderSegs() {
+  seg("kindSeg", [["film", "Film postcard"], ["swap", "Swap<small>if you liked X, watch Y</small>"]], "kind", (id, name) => name);
+  renderSwapPanel();
   seg("directorInSeg", [["billing", "Under the poster"], ["top", "Top line"]], "directorIn", (id, name) => name);
   seg("handlePosSeg", Object.entries(HANDLE_POS), "handlePos", (id, name) => name);
   seg("ratioSeg", Object.entries(RATIOS), "ratio", (id, m) => `${id}<small>${m.name}</small>`);
@@ -1026,15 +1318,153 @@ function renderSamples() {
   }
 }
 
+/* ---------------- swap template controls ---------------- */
+function elt(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+let swapUploadFor = null; // item id waiting for a poster from #swapFile
+const STILL_SLIDERS = [["x", "Left to right", 0, 1, 0.01, v => Math.round(v * 100)], ["y", "Top to bottom", 0, 1, 0.01, v => Math.round(v * 100)],
+  ["zoom", "Zoom", 1, 3, 0.01, v => (+v).toFixed(2) + "×"], ["size", "Height", 0.4, 1, 0.01, v => Math.round(v * 100) + "%"], ["fade", "Fade length", 0.1, 1, 0.01, v => Math.round(v * 100) + "%"]];
+
+function swapInput(label, value, onInput, { area = false, placeholder = "" } = {}) {
+  const f = elt("div", "field"), l = elt("label", "", label), i = elt(area ? "textarea" : "input");
+  if (!area) i.type = "text"; else i.rows = 2;
+  const id = "sw-" + uid(); l.htmlFor = id; i.id = id; i.value = value; i.placeholder = placeholder;
+  i.addEventListener("input", () => { onInput(i.value); schedule(); });
+  f.append(l, i); return f;
+}
+function swapThumb(item) {
+  const b = elt("button", "swap-thumb"); b.type = "button"; b.title = "Upload a poster for this one"; b.setAttribute("aria-label", `Poster for ${item.title || "this item"}`);
+  const p = itemPosters.get(item.id);
+  if (p) { const c = document.createElement("canvas"); c.width = 80; c.height = 120; c.getContext("2d").drawImage(p, 0, 0, 80, 120); b.append(c); } else b.textContent = "+ poster";
+  b.addEventListener("click", () => { swapUploadFor = item.id; document.getElementById("swapFile").click(); });
+  return b;
+}
+// The panel's handlers look the slide's swap data up when they fire. state.swap is replaced whenever slides are
+// switched or thumbnails redraw (loadSlide), so anything captured when the panel was built may already be stale.
+const swapItem = (list, id) => state.swap[list].find(x => x.id === id) || {};
+function removeItem(list, id) {
+  const arr = state.swap[list], i = arr.findIndex(x => x.id === id); if (i < 0) return;
+  arr.splice(i, 1); itemPosters.delete(id); idbPut(`swap:${id}`, null);
+  renderSwapPanel(); schedule();
+}
+function renderSwapPanel() {
+  document.body.dataset.kind = state.kind;
+  document.body.dataset.swapStyle = state.swap?.style || "";
+  const box = document.getElementById("swapCtl"); if (!box) return;
+  box.innerHTML = ""; if (!isSwap()) return;
+  const sw = state.swap, style = sw.style;
+
+  const sf = elt("div", "field"); sf.append(elt("span", "lbl", "Layout")); const sg = elt("div", "seg");
+  for (const [id, m] of Object.entries(SWAP_STYLES)) {
+    const b = elt("button"); b.type = "button"; b.setAttribute("aria-pressed", String(style === id));
+    b.append(document.createTextNode(m.name), elt("small", "", m.note));
+    b.addEventListener("click", () => { state.swap.style = id; renderSwapPanel(); schedule(); });
+    sg.append(b);
+  }
+  sf.append(sg); box.append(sf);
+
+  // the shows you liked (the grid takes up to four; 1 v 1 and the list use the first)
+  const likedN = style === "grid" ? sw.liked.length : 1;
+  const lw = elt("div", "swap-group"); lw.append(elt("span", "lbl", style === "grid" ? "Shows you liked" : "The show you liked"));
+  sw.liked.slice(0, likedN).forEach(it => {
+    const row = elt("div", "swap-item"); row.append(swapThumb(it));
+    const fields = elt("div", "swap-fields"); fields.append(swapInput("Title", it.title, v => { swapItem("liked", it.id).title = v; }, { placeholder: "The Office" })); row.append(fields);
+    if (likedN > 1) { const x = elt("button", "icon-btn", "✕"); x.type = "button"; x.setAttribute("aria-label", `Remove ${it.title || "this show"}`); x.addEventListener("click", () => removeItem("liked", it.id)); row.append(x); }
+    lw.append(row);
+  });
+  if (style === "grid" && sw.liked.length < SWAP_MAX) {
+    const add = elt("button", "linkbtn", "+ Add a show you liked"); add.type = "button";
+    add.addEventListener("click", () => { state.swap.liked.push({ id: uid(), title: "" }); renderSwapPanel(); schedule(); }); lw.append(add);
+  }
+  box.append(lw);
+
+  // extra picks (grid and list); the first pick is always the slide's own poster and Words
+  if (style !== "pair") {
+    const pw = elt("div", "swap-group"); pw.append(elt("span", "lbl", "More picks"), elt("p", "hint", "The first pick is this slide's poster and Words. Add up to three more."));
+    sw.picks.forEach(it => {
+      const row = elt("div", "swap-item"); row.append(swapThumb(it));
+      const fields = elt("div", "swap-fields"), two = elt("div", "row");
+      const set = k => v => { swapItem("picks", it.id)[k] = v; };
+      two.append(swapInput("Year", it.year, set("year")), swapInput("Details", it.details, set("details"), { placeholder: "6 seasons · NBC" }));
+      fields.append(swapInput("Title", it.title, set("title")), two, swapInput("One line on why", it.line, set("line"), { area: true, placeholder: "The *talking heads* are back, in a public school." }));
+      const x = elt("button", "icon-btn", "✕"); x.type = "button"; x.setAttribute("aria-label", `Remove ${it.title || "this pick"}`); x.addEventListener("click", () => removeItem("picks", it.id));
+      row.append(fields, x); pw.append(row);
+    });
+    if (sw.picks.length < SWAP_MAX - 1) {
+      const add = elt("button", "linkbtn", "+ Add a pick"); add.type = "button";
+      add.addEventListener("click", () => { state.swap.picks.push({ id: uid(), title: "", year: "", details: "", line: "" }); renderSwapPanel(); schedule(); }); pw.append(add);
+    }
+    box.append(pw);
+  }
+
+  if (style !== "list") {
+    const two = elt("div", "row");
+    two.append(swapInput(style === "grid" ? "Above the liked row" : "Under the liked poster", sw.likedLabel, v => { state.swap.likedLabel = v; }),
+      swapInput(style === "grid" ? "Above the picks" : "Under the pick", sw.watchLabel, v => { state.swap.watchLabel = v; }));
+    box.append(two);
+  }
+  if (style === "pair") box.append(swapInput("What they share (comma separated)", sw.traits, v => { state.swap.traits = v; }, { placeholder: "Workplace ensemble, A slow-burn couple" }));
+  if (style === "list") {
+    const lt = sw.liked[0]?.title.trim();
+    box.append(swapInput("Headline", sw.headline, v => { state.swap.headline = v; }, { placeholder: lt ? `Loved ${lt}?` : "Loved The Office?" }),
+      swapInput("Line under it", sw.sub, v => { state.swap.sub = v; }, { placeholder: "You want warm cringe with a heart." }));
+    const sg2 = elt("div", "swap-group");
+    sg2.append(elt("span", "lbl", "The image behind it"), elt("p", "hint", bgImage
+      ? "Using this slide's still, which takes priority over the liked show's poster. Drag the preview to frame it."
+      : "Using the liked show's poster. A wide still from the show usually looks better. Drag the preview to frame it."));
+    const btns = elt("div", "uploader"), up = elt("button", "btn small", bgImage ? "Replace still" : "Upload a still");
+    up.type = "button"; up.addEventListener("click", () => document.getElementById("bgFile").click()); btns.append(up);
+    if (bgImage) { const back = elt("button", "btn small", "Use the liked poster"); back.type = "button"; back.addEventListener("click", () => document.getElementById("clearBg").click()); btns.append(back); }
+    sg2.append(btns);
+    for (const [k, label, lo, hi, step, fmt] of STILL_SLIDERS) {
+      const f = elt("div", "field"), l = elt("label", "", label), o = elt("output"), i = elt("input");
+      i.type = "range"; i.min = lo; i.max = hi; i.step = step; i.value = sw.still[k]; i.dataset.still = k; o.textContent = fmt(sw.still[k]);
+      const id = "sw-" + uid(); l.htmlFor = id; i.id = id; l.append(o);
+      i.addEventListener("input", () => { state.swap.still[k] = +i.value; o.textContent = fmt(+i.value); schedule(); });
+      f.append(l, i); sg2.append(f);
+    }
+    box.append(sg2);
+  }
+}
+function syncStillSliders() {
+  document.querySelectorAll("#swapCtl input[data-still]").forEach(i => {
+    const k = i.dataset.still, v = state.swap.still[k]; i.value = v;
+    const fmt = STILL_SLIDERS.find(s => s[0] === k)[5]; i.previousElementSibling.querySelector("output").textContent = fmt(v);
+  });
+}
+document.getElementById("swapFile").addEventListener("change", async e => {
+  const f = e.target.files[0], id = swapUploadFor; e.target.value = ""; swapUploadFor = null;
+  if (!f || !id) return;
+  if (!f.type.startsWith("image/")) { toast("That file isn't an image. Try a JPG, PNG or WebP."); return; }
+  try {
+    const url = await readFile(f), c = cropTo23(await loadImage(url));
+    itemPosters.set(id, c); idbPut(`swap:${id}`, downsized(c, 1000).toDataURL("image/jpeg", 0.92));
+    if (state.swap.style === "list" && bgImage && state.swap.liked[0]?.id === id) toast("Poster saved. The image behind the list is still this slide's still: use \"Use the liked poster\" to show this one instead.");
+    renderSwapPanel(); schedule();
+  } catch (err) { toast("Couldn't read that image."); }
+});
+// List layout: drag the preview to frame the still.
+let frameDrag = null;
+preview.addEventListener("pointerdown", e => {
+  if (coverOn() || !isSwap() || state.swap.style !== "list") return;
+  frameDrag = { x: e.clientX, y: e.clientY }; preview.setPointerCapture(e.pointerId);
+});
+preview.addEventListener("pointermove", e => {
+  if (!frameDrag) return;
+  const r = preview.getBoundingClientRect(), st = state.swap.still, cl = v => Math.min(1, Math.max(0, v));
+  st.x = cl(st.x - (e.clientX - frameDrag.x) / r.width * 1.6); st.y = cl(st.y - (e.clientY - frameDrag.y) / (r.height * st.size) * 1.6);
+  frameDrag = { x: e.clientX, y: e.clientY }; syncStillSliders(); schedule();
+});
+for (const ev of ["pointerup", "pointercancel"]) preview.addEventListener(ev, () => { frameDrag = null; });
+
 /* ---------------- files, drop, paste ---------------- */
 document.getElementById("posterFile").addEventListener("change", e => { usePosterFile(e.target.files[0]); e.target.value = ""; });
 document.getElementById("bgFile").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   const url = await readFile(f); bgImage = await loadImage(url); document.getElementById("clearBg").hidden = false;
   idbPut(`deck:${deck[cur].id}:bg`, url);
-  toast("Backdrop now uses your still. The poster stays in front."); schedule();
+  toast("Backdrop now uses your still. The poster stays in front."); renderSwapPanel(); schedule();
 });
-document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; idbPut(`deck:${deck[cur].id}:bg`, null); schedule(); });
+document.getElementById("clearBg").addEventListener("click", e => { bgImage = null; e.currentTarget.hidden = true; idbPut(`deck:${deck[cur].id}:bg`, null); renderSwapPanel(); schedule(); });
 
 const veil = document.getElementById("veil"); let dragDepth = 0;
 const takeImage = f => { if (isProjectFile(f)) openProject(f); else if (coverOn()) window.Cover.takeFile(f); else usePosterFile(f); };
@@ -1132,8 +1562,13 @@ document.getElementById("downloadAll").addEventListener("click", async () => {
 document.getElementById("copyCaption").addEventListener("click", () => {
   const title = (state.title || "").trim(), plain = (state.blurb || "").replace(/\*/g, "").trim();
   const tag = slug(title).replace(/-/g, "");
+  const and = a => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a[a.length - 1];
+  const swapLine = () => {
+    const liked = state.swap.liked.map(l => l.title.trim()).filter(Boolean), picks = pickList().map(k => (k.title || "").trim()).filter(Boolean);
+    return `If you liked ${and(liked) || "…"}, watch ${and(state.swap.style === "pair" ? picks.slice(0, 1) : picks) || "…"}.`;
+  };
   const lines = [
-    `${title}${state.year ? ` (${state.year})` : ""}${+state.rating > 0 ? "  " + starText(+state.rating) : ""}`,
+    isSwap() ? swapLine() : `${title}${state.year ? ` (${state.year})` : ""}${+state.rating > 0 ? "  " + starText(+state.rating) : ""}`,
     "", plain, "",
     [state.director && `Dir. ${state.director}`, state.runtime, state.genre].filter(Boolean).join(" · "),
     (state.cast || "").trim() ? `Cast: ${(state.cast || "").trim()}` : "",
@@ -1160,13 +1595,15 @@ async function saveProject() {
   const look = readJSON(STORE_KEY), deckData = readJSON(DECK_KEY), cover = readJSON(COVER_KEY), kit = readJSON(KIT_KEY);
   if (!deckData) { toast("Couldn't read this browser's storage, so there's nothing to save."); return; }
   const images = {};
-  const keys = [...deck.flatMap(sl => [`deck:${sl.id}`, `deck:${sl.id}:bg`]), "cover:still"];
+  const itemIds = deck.flatMap(sl => swapIds(sl.swap));
+  const keys = [...deck.flatMap(sl => [`deck:${sl.id}`, `deck:${sl.id}:bg`]), ...itemIds.map(id => `swap:${id}`), "cover:still"];
   for (const k of keys) { const v = await idbGet(k); if (v) images[k] = v; }
   // Images that never reached storage (storage blocked) still go in, straight from memory.
   deck.forEach((sl, i) => {
     const p = i === cur ? posterCanvas : imgs.get(sl.id)?.poster;
     if (!sl.sample && p && !images[`deck:${sl.id}`]) images[`deck:${sl.id}`] = downsized(p, 1400).toDataURL("image/jpeg", 0.92);
   });
+  for (const id of itemIds) { const p = itemPosters.get(id); if (p && !images[`swap:${id}`]) images[`swap:${id}`] = downsized(p, 1000).toDataURL("image/jpeg", 0.92); }
   const file = { app: PROJECT_APP, version: 1, savedAt: new Date().toISOString(), look, deck: deckData, cover, images };
   if (kit) file.kit = kit; // older builds of the tool ignore this
   const name = cover?.enabled ? [cover.kicker, cover.title].filter(Boolean).join(" ") : (deck[0] && (cur === 0 ? state.title : deck[0].title));
@@ -1178,7 +1615,7 @@ async function saveProject() {
 }
 
 const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
-const IMAGE_KEY = /^(deck:[a-z0-9]{1,16}(:bg)?|cover:still)$/;
+const IMAGE_KEY = /^(deck:[a-z0-9]{1,16}(:bg)?|cover:still|swap:[a-z0-9]{1,16})$/;
 const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i;
 function checkProject(p) {
   if (!isObj(p) || p.app !== PROJECT_APP || typeof p.version !== "number") return "That isn't a Poster Card Studio project file.";
@@ -1246,7 +1683,7 @@ async function boot() {
   // Put the current slide's words in place before the posters load: anything that draws thumbnails meanwhile
   // (the cover's own startup does) stashes state into deck[cur], and must not stash the previous look's words.
   loadSlide(cur);
-  const loaded = await Promise.all(deck.map(imagesFor));
+  const loaded = await Promise.all([...deck.map(imagesFor), ...deck.flatMap(sl => swapIds(sl.swap)).map(loadItemPoster)]);
   deck.forEach((sl, i) => imgs.set(sl.id, loaded[i]));
   loadSlide(cur);
   document.getElementById("clearBg").hidden = !bgImage;
