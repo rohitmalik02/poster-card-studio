@@ -495,7 +495,7 @@ async function encodeVideo(width, height, frames, draw, onProgress = () => {}) {
 
 window.Cover = {
   render, sync, takeFile, refresh, flush, hold: () => clearTimeout(saveT),
-  moving, video: renderVideo, loopSec, encodeVideo, FPS,
+  moving, video: renderVideo, loopSec, encodeVideo, FPS, QP, loadEncoder,
   info: () => ({ kicker: hero.kicker || "", title: hero.title || "", line: hero.line || "", design: hero.design }),
   enabled: () => !!hero.enabled,
   setEnabled: v => { hero.enabled = !!v; changed(); },

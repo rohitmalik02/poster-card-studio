@@ -36,7 +36,7 @@ Swaps never show stars. Their posters go into project files with everything else
 
 In Carousel mode, the Kit panel turns the finished project into posts that point back to it:
 
-- Spotlight reels (9:16 MP4), one per starred film: a reel title, the film's poster or a clip of it with three reasons, the whole list, and a follow call. Quick (up to 30 s) or Long (up to 1 min), timed by the amount of text.
+- Spotlight reels (9:16 MP4), one per starred film: a reel title, the film's poster or a clip of it with three reasons, the whole list, and a follow call. Quick (up to 30 s) or Long (up to 1 min), timed by the amount of text, or Fit clip (experimental), which plays the whole trimmed clip once and runs as long as that takes.
 - Clips: add a video per film, trim it, and drag to frame it in a phone-shaped preview. The clip's sound is kept (AAC in Chrome and Edge on Windows and Mac). Clips are stored in the browser, not in project files.
 - A recap reel cut to a tempo, five story frames with room for stickers, captions with alt text and hashtags, a Letterboxd import file and a week plan.
 - Export one asset, or the full kit as a zip.

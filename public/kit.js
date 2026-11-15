@@ -16,7 +16,6 @@ const flush = () => { clearTimeout(saveT); try { localStorage.setItem(KEY, JSON.
 const save = () => { clearTimeout(saveT); saveT = setTimeout(flush, 300); };
 
 const W = 1080, H = 1920, FPS = C.FPS || 30;
-const spotLen = () => (kit.spotLength === "60" ? 60 : 30);
 // Reels safe area: Instagram's header covers the top, caption/audio the bottom ~380 px, buttons the right edge.
 // Reels safe area (no official spec; between Meta's ad guidance and the common 1080x1420 rule): clear of the header
 // (top 250), the caption, audio and username (bottom 420) and the like/comment/share column (equal 130 side margins).
@@ -73,10 +72,29 @@ function lines(ctx, r, kind, x, y, lh, align, color, alpha = 1) {
   ctx.restore(); P.clearTracking(ctx);
   return r.size * 0.8 + (r.lines.length - 1) * r.size * lh + r.size * 0.25;
 }
-function label(ctx, text, x, y, size, color, align = "center", alpha = 1, track = 1) {
-  if (alpha <= 0 || !text) return;
-  ctx.save(); ctx.globalAlpha *= alpha; ctx.font = font("label", size); ctx.fillStyle = color; ctx.textBaseline = "alphabetic";
-  P.drawTracked(ctx, text.toUpperCase(), x, y, pre().label.track * track, size, align); ctx.restore();
+// A small tracked caps line that never leaves the frame: too wide, it shrinks (to 80%), then wraps. Wrapped lines
+// grow downward from y, or upward (`grow: "up"`, y stays the last line's baseline) when something sits below it.
+// It breaks at a " · " first, so "Kicker · Title" splits into its parts before splitting words. Returns the lines.
+function label(ctx, text, x, y, size, color, align = "center", alpha = 1, track = 1, grow = "down") {
+  if (alpha <= 0 || !text) return 1;
+  const room = align === "center" ? 2 * Math.min(x - SAFE.left, SAFE.right - x) : align === "left" ? SAFE.right - x : x - SAFE.left;
+  const maxW = Math.max(200, room), T = text.toUpperCase(), tr = pre().label.track * track;
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.textBaseline = "alphabetic";
+  const wid = (s, sz) => P.trackedWidth(ctx, s, tr, sz);
+  let sz = size; ctx.font = font("label", sz);
+  while (sz > size * 0.8 && wid(T, sz) > maxW) ctx.font = font("label", (sz -= 1));
+  let out = [T];
+  if (wid(T, sz) > maxW) {
+    sz = size; ctx.font = font("label", sz); out = [];
+    for (const part of T.split(/\s+·\s+/)) {
+      let line = "";
+      for (const w of part.split(/\s+/).filter(Boolean)) { const t = line ? line + " " + w : w; if (wid(t, sz) <= maxW || !line) line = t; else { out.push(line); line = w; } }
+      if (line) out.push(line);
+    }
+  }
+  const lh = sz * 1.45, y0 = grow === "up" ? y - (out.length - 1) * lh : y;
+  out.forEach((l, i) => P.drawTracked(ctx, l, x, y0 + i * lh, tr, sz, align));
+  ctx.restore(); return out.length;
 }
 const rr = (ctx, x, y, w, h, r) => P.rrect(ctx, x, y, w, h, r);
 
@@ -150,13 +168,16 @@ function staticNoise(ctx, seed, alpha) {
   ctx.restore();
 }
 
-/* ---------------- spotlight reel (one film, then the whole list; 30 s or 1 min) ----------------
+/* ---------------- spotlight reel (one film, then the whole list; 30 s, 1 min, or as long as the clip) ----------------
    reel title · the film (poster, title and reel line, then three reasons) · "want to watch more like this?" ·
    the whole list lands (grid or scatter), then a sweep lifts each poster with its title · follow call */
 // Timing follows the words: each reason stays up for a reading pace (by word count), the list moment scales with
 // the number of films, and the whole reel is capped (Quick 30 s, Long 1 min); long text gets compressed to fit.
-function timeline(f) {
-  const long = kit.spotLength === "60", cap = long ? 60 : 30, n = Math.max(1, films().length);
+// Fit clip (experimental) has no cap when the film has a clip: the whole trim plays once, with Long's pacing around
+// it, so the reel runs as long as it needs (Instagram takes reels up to 3 min). Without a clip it is just Long.
+function timeline(f, mode = kit.spotLength) {
+  const c = f && clipOf(f), fit = mode === "fit" && !!c;
+  const long = mode !== "30", cap = fit ? Infinity : long ? 60 : 30, n = Math.max(1, films().length);
   const words = f ? reasonsOf(f).map(r => plain(r).split(/\s+/).filter(Boolean).length) : [];
   let reasons = words.map(w => (long ? 1.1 : 0.7) + w * (long ? 0.3 : 0.22));
   const d = { title: long ? 2.8 : 2.2, intro: long ? 3.4 : 2.2, more: long ? 2.4 : 1.8, list: long ? 3 + n * 1.2 : 2.2 + n * 0.7, follow: long ? 4 : 3 };
@@ -171,7 +192,6 @@ function timeline(f) {
     reasons = reasons.map(r => Math.max(1.5, r * k));
     const over = fixed() + sum(reasons) - cap; if (over > 0) d.list = Math.max(2 + n * 0.5, d.list - over);
   }
-  const c = f && clipOf(f);
   if (c && reasons.length) {
     // the film section lasts as long as the trimmed clip, but no shorter than the words need (the clip loops then)
     // and no longer than the cap allows (the clip is cut off then); the reasons share the time by word count
@@ -180,9 +200,12 @@ function timeline(f) {
     const total = filmLen - d.intro - 0.9, w = words.map(x => x + 3), ws = sum(w);
     reasons = w.map(x => total * x / ws);
   }
+  // Each reason gets a slot (reasons[i]) but is only on screen for as long as it takes to read (1.5 s to find it,
+  // then 3.2 words a second, with a beat to sit after), or the whole slot when that is tighter. The rest is clean footage.
+  const reasonShow = reasons.map((r, i) => Math.min(r, 1.5 + words[i] / 3.2));
   const film = d.title - 0.2, shrink = film + d.intro, reasonsFrom = shrink + 0.6;
   const filmEnd = reasonsFrom + sum(reasons) + 0.3, more = filmEnd + 0.35, list = more + d.more - 0.2, end = list + d.list;
-  return { L: Math.min(cap, end + d.follow), title: d.title, film, shrink, reasonsFrom, reasonDur: reasons, filmEnd, more, list, end };
+  return { L: Math.min(cap, end + d.follow), title: d.title, film, shrink, reasonsFrom, reasonDur: reasons, reasonShow, filmEnd, more, list, end };
 }
 // Where each poster sits in the list moment. Grid: the column count that gives the biggest posters, centred.
 // Scatter: the same slots, jittered, tilted and resized like prints tossed on a table (seeded, so it's repeatable).
@@ -242,13 +265,34 @@ function clipRange(id) {
 function clipTime(f, t) {
   const c = clipOf(f), TL = timeline(f); if (!c) return 0;
   const r = clipRange(f.id), local = clamp(t - TL.film, 0, TL.filmEnd - TL.film);
-  return Math.min(r.start + (local % r.len), Math.max(0, c.dur - 0.05));
+  // a quarter of a frame in: reel frames fall exactly on the clip's frame borders, where rounding would show one
+  // frame twice and skip the next
+  return Math.min(r.start + (local % r.len) + 0.25 / FPS, Math.max(0, c.dur - 0.05));
 }
-function seekTo(v, time) {
-  if (Math.abs(v.currentTime - time) < 0.01) return Promise.resolve();
-  return new Promise(res => { let done = false; const fin = () => { if (done) return; done = true; v.removeEventListener("seeked", fin); res(); };
-    v.addEventListener("seeked", fin); v.currentTime = time; setTimeout(fin, 3000); });
+// Resolves true when `ev` fires, false after `ms`.
+function once(v, ev, ms) {
+  return new Promise(res => { let done = false, tm = 0; const fin = ok => { if (done) return; done = true; v.removeEventListener(ev, on); clearTimeout(tm); res(ok); };
+    const on = () => fin(true); v.addEventListener(ev, on); tm = setTimeout(() => fin(false), ms); });
 }
+// Seek and wait for the frame. Long-GOP clips (a keyframe every few seconds) can take a while, so the wait is long
+// and a timed-out seek is tried once more; drawing before the seek lands would show whatever frame was up before.
+async function seekTo(v, time) {
+  if (v.readyState < 2 && !(await once(v, "loadeddata", 10000))) console.warn("clip not loaded");
+  if (Math.abs(v.currentTime - time) < 0.01 && !v.seeking) return;
+  for (let k = 0; k < 2; k++) { const p = once(v, "seeked", 10000); v.currentTime = time; if (await p) return; }
+  console.warn("clip seek timed out at", time);
+}
+// During a parallel export each run of frames seeks its own copy of the clip (activeRun picks it), so a copy only
+// moves forward through its own part. One shared element jumped between runs 18 s apart: slower, and a late frame
+// was another run's, which showed as a one-frame flash; now a late frame can only be the one just before.
+let activeRun = 0;
+function clipVideo(c) {
+  if (!activeRun) return c.video;
+  const runs = c.runs || (c.runs = []);
+  if (!runs[activeRun]) { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = c.url; runs[activeRun] = v; }
+  return runs[activeRun];
+}
+function releaseRunVideos() { for (const c of clips.values()) { (c.runs || []).forEach(v => v && v.removeAttribute("src")); c.runs = null; } }
 // The clip, cover-fitted to the frame; `blur` 0..1 mixes in a soft version (drawn small and scaled up, which is cheap)
 const blurBuf = document.createElement("canvas"); blurBuf.width = 270; blurBuf.height = 480;
 function drawClip(ctx, v, blur = 0, fr = { x: 0.5, y: 0.5, z: 1 }) {
@@ -284,7 +328,7 @@ function drawListMoment(ctx, t, TL, list, acc) {
   const cur = t >= landed && t < sweepEnd ? Math.floor((t - landed) / per) : -1, cu = cur >= 0 ? (t - landed - cur * per) / per : 0;
   const lift = cur >= 0 ? Math.min(ease(cu / 0.25), 1 - ease((cu - 0.8) / 0.2)) : 0;
   const headY = kit.recapStyle === "scatter" ? lay.areaTop - 40 : lay.gy0 - 34;
-  label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, headY, 28, acc, "center", fade(t, TL.list, 0.3) * dim);
+  label(ctx, [info().kicker, reelTitle()].filter(Boolean).join("  ·  "), cx, headY, 28, acc, "center", fade(t, TL.list, 0.3) * dim, 1, "up");
   const order = lay.slots.map((sl, i) => ({ ...sl, i })).sort((a, b) => (a.i === cur) - (b.i === cur) || a.z - b.z);
   for (const sl of order) {
     const a = ease(fade(t, TL.list + 0.2 + sl.i * stagger, 0.3)); if (a <= 0) continue;
@@ -325,7 +369,8 @@ function reasonBox(ctx, f, maxW, boxMax, maxSize = 56) {
 function drawReasons(ctx, t, rb, x, y, w, TL, alpha, acc, shadow) {
   let start = TL.reasonsFrom;
   rb.rs.forEach((txt, i) => {
-    const s0 = start, s1 = start + (TL.reasonDur[i] || 2); start = s1;
+    // on screen for its reading time (reasonShow), then gone until the next reason's slot (reasonDur) begins
+    const s0 = start, s1 = s0 + ((TL.reasonShow || TL.reasonDur)[i] || 2); start += TL.reasonDur[i] || 2;
     const a = span(t, s0, s1, 0.3) * alpha; if (a <= 0) return;
     const by = y + (1 - ease(fade(t, s0, 0.35))) * 40;
     const bh = rb.hs[i] || rb.h, bt = shadow ? by + rb.h - bh : by; // overlays sit on the bottom edge, the rest hang from the top
@@ -386,8 +431,8 @@ function drawHook(ctx, hr, x, y, t, t0, alpha, acc) {
 }
 function drawIntroBits(ctx, b, x, y, alphaMeta, alphaHook, t = 99, t0 = 0) {
   let yy = y;
-  if (b.meta) { yy += 34; label(ctx, b.meta, x, yy, 28, "rgba(255,255,255,0.85)", "center", alphaMeta); yy += 18; }
-  if (b.cast) { yy += 32; label(ctx, b.cast, x, yy, 24, "rgba(255,255,255,0.7)", "center", alphaMeta, 0.6); yy += 14; }
+  if (b.meta) { yy += 34; yy += (label(ctx, b.meta, x, yy, 28, "rgba(255,255,255,0.85)", "center", alphaMeta) - 1) * 28 * 1.45 + 18; }
+  if (b.cast) { yy += 32; yy += (label(ctx, b.cast, x, yy, 24, "rgba(255,255,255,0.7)", "center", alphaMeta, 0.6) - 1) * 24 * 1.45 + 14; }
   drawHook(ctx, b.hr, x, yy, t, t0, alphaHook, b.acc);
 }
 
@@ -430,7 +475,7 @@ function drawSpotlight(ctx, t, f, idx, n) {
 // picture blurs again under the list moment and the follow call.
 function drawSpotlightClip(ctx, t, f, clip, TL, list, acc) {
   const F = TL.film, blur = t < F + 0.9 ? 1 - fade(t, F, 0.9) : fade(t, TL.filmEnd - 0.7, 0.7);
-  drawClip(ctx, clip.video, blur, clipFrame(f.id));
+  drawClip(ctx, clipVideo(clip), blur, clipFrame(f.id));
   drawReelTitle(ctx, t, TL, acc);
   const film = Math.min(fade(t, F + 0.5, 0.4), 1 - fade(t, TL.filmEnd - 0.5, 0.4));
   if (film > 0) {
@@ -585,7 +630,7 @@ function assets() {
     const i = list.findIndex(f => f.id === id), f = list[i];
     out.push({ id: "spot:" + id, name: `Spotlight reel · ${f.title}`, day: days[k] ?? 8 + k, file: `${days[k] !== undefined ? "day" + days[k] : "extra"}-spotlight-${P.slug(f.title)}`,
       kind: "video", seconds: timeline(f).L, still: timeline(f).reasonsFrom + 0.8, draw: (ctx, t) => drawSpotlight(ctx, t, f, i + 1, n),
-      prepare: clipOf(f) ? t => seekTo(clips.get(f.id).video, clipTime(f, t)) : null, clipFor: f });
+      prepare: clipOf(f) ? t => seekTo(clipVideo(clips.get(f.id)), clipTime(f, t)) : null, clipFor: f });
   });
   out.push({ id: "story-seen", name: "Story · how many have you seen?", day: 2, file: "day2-story-how-many-seen", kind: "image", draw: ctx => drawStorySeen(ctx) });
   out.push({ id: "story-pair", name: "Story · this or that", day: 4, file: "day4-story-this-or-that", kind: "image", draw: ctx => drawStoryPair(ctx) });
@@ -715,8 +760,18 @@ function refresh() {
   if (document.activeElement !== $("kitReelTitle")) $("kitReelTitle").value = kit.reelTitle || "";
   for (const [id, key] of [["kitSpotLength", "spotLength"], ["kitRecapStyle", "recapStyle"]])
     $(id).querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(kit[key] === b.dataset.v)));
+  syncFitLen();
   bgCache.clear(); cardCache.clear(); coverCache = null;
   if (!playing) showCurrent();
+}
+// What Fit clip would make: the length of each starred spotlight that has a clip ("1:07", or "0:52–1:07")
+const mmss = s => { const r = Math.round(s); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, "0")}`; };
+function syncFitLen() {
+  const el = $("kitFitLen"); if (!el) return;
+  const ids = spotlightIds(), Ls = films().filter(f => ids.includes(f.id) && clipOf(f)).map(f => timeline(f, "fit").L);
+  if (!Ls.length) { el.textContent = "whole clip · experimental"; return; }
+  const lo = Math.min(...Ls), hi = Math.max(...Ls);
+  el.textContent = `whole clip · ${Math.round(lo) === Math.round(hi) ? mmss(hi) : mmss(lo) + "–" + mmss(hi)}`;
 }
 let refreshT = 0;
 const soon = () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 250); };
@@ -735,12 +790,120 @@ document.querySelectorAll("[data-k]").forEach(el => el.addEventListener("input",
 $("kitPanel").addEventListener("toggle", () => { if ($("kitPanel").open) refresh(); });
 
 /* ---------------- export ---------------- */
+// Encoding is what makes export slow (about 0.2 s a frame for one encoder at 1080 × 1920), so the reel is cut into
+// a few runs of frames, each encoded by its own worker at the same time, and the pieces are joined into one MP4.
+// Every run starts on a keyframe; same encoder settings, so the pieces share one decoder config. Frames are drawn
+// on this thread, a frame from each run in turn, so every worker always has one waiting.
+// Waiting on workers (not timers) also keeps it going in a background tab, where timers are slowed to a crawl.
+const encoderFault = m => Object.assign(new Error(m), { encoder: true });
+// Opened from a file (file://), a page can't start a worker from a file, so the same worker is built in memory:
+// the encoder wrapper this page already loaded (its function source) plus the wasm, sent in the first message.
+// Served over http(s) it uses encode-worker.js, which the site's CSP allows (it doesn't allow blob: workers).
+const WORKER_SRC = `var _scriptDir = "";
+let ready = null, enc = null;
+onmessage = async ({ data: d }) => {
+  try {
+    if (d.type === "start") { ready = ready || Mp4H264({ wasmBinary: d.wasm }); enc = (await ready).create(d.opts); return; }
+    await ready;
+    if (d.type === "frame") { enc.encodeRGB(new Uint8Array(d.buf)); postMessage({ type: "done" }); }
+    else if (d.type === "end") { const out = enc.end(); enc = null; postMessage({ type: "mp4", out }, [out.buffer]); }
+  } catch (e) { postMessage({ type: "error", message: String((e && e.message) || e) }); }
+};
+`;
+let workerSrc = null;
+async function workerSource() {
+  if (location.protocol !== "file:") return { url: "encode-worker.js" };
+  if (!workerSrc) {
+    await C.loadEncoder();
+    const wasm = Uint8Array.from(atob(window.MP4_H264_WASM), ch => ch.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([`var Mp4H264 = ${window.Mp4H264};\n${WORKER_SRC}`], { type: "text/javascript" }));
+    workerSrc = { url, wasm };
+  }
+  return workerSrc;
+}
+function encoderWorker(src, opts) {
+  let w; try { w = new Worker(src.url); } catch (e) { throw encoderFault(e.message || String(e)); }
+  const waiting = []; let fail = null, ending = null;
+  const die = e => { fail = fail || e; waiting.splice(0).forEach(p => p.rej(fail)); if (ending) ending.rej(fail); };
+  w.onmessage = ({ data: d }) => {
+    if (d.type === "done") waiting.shift()?.res();
+    else if (d.type === "mp4") ending?.res(d.out);
+    else if (d.type === "error") die(encoderFault(d.message));
+  };
+  w.onerror = e => { e.preventDefault?.(); die(encoderFault(e.message || "the encoder worker failed")); };
+  w.postMessage({ type: "start", opts, wasm: src.wasm });
+  return {
+    send(buf) {
+      if (fail) return Promise.reject(fail);
+      const p = new Promise((res, rej) => waiting.push({ res, rej })); w.postMessage({ type: "frame", buf }, [buf]); return p;
+    },
+    end() { return fail ? Promise.reject(fail) : new Promise((res, rej) => { ending = { res, rej }; w.postMessage({ type: "end" }); }); },
+    kill() { w.terminate(); },
+  };
+}
+const nextTask = () => new Promise(r => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0); });
+async function encodeParallel(frames, drawFrame, onProgress) {
+  const K = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1, Math.floor(frames / 45)));
+  const at = Array.from({ length: K + 1 }, (_, s) => Math.round(frames * s / K)), runs = at.slice(0, -1).map((a, s) => at[s + 1] - a);
+  const ws = [], c = document.createElement("canvas"); c.width = W; c.height = H;
+  const ctx = c.getContext("2d", { willReadFrequently: true }), queued = runs.map(() => []);
+  let done = 0, drawn = 0;
+  try {
+    let src; try { src = await workerSource(); } catch (e) { throw encoderFault(e.message || String(e)); }
+    for (const n of runs) ws.push(encoderWorker(src, { width: W, height: H, fps: FPS, quantizationParameter: C.QP || 20, speed: 4, groupOfPictures: n, stride: 4 }));
+    for (let j = 0; j < Math.max(...runs); j++) for (let s = 0; s < K; s++) {
+      if (j >= runs[s]) continue;
+      if (queued[s].length >= 2) await queued[s].shift(); // at most two frames waiting per worker (8 MB each)
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over"; ctx.filter = "none";
+      await drawFrame(ctx, at[s] + j, s);
+      const p = ws[s].send(ctx.getImageData(0, 0, W, H).data.buffer).then(() => onProgress(++done / frames));
+      p.catch(() => {}); queued[s].push(p);
+      if (++drawn % 4 === 0) await nextTask(); // let the progress text paint
+    }
+    await Promise.all(queued.flat());
+    return await joinMp4(await Promise.all(ws.map(w => w.end())));
+  } finally { ws.forEach(w => w.kill()); }
+}
+// The workers' MP4s, one after another, as one MP4 (video only; withClipSound adds the sound after).
+async function joinMp4(parts) {
+  if (parts.length === 1) return new Blob([parts[0]], { type: "video/mp4" });
+  const vs = parts.map(readMp4Video), v = vs[0];
+  if (vs.some(x => x.desc.length !== v.desc.length || x.desc.some((b, i) => b !== v.desc[i]))) throw encoderFault("the pieces came out with different settings");
+  const M = await loadMuxer(), fd = 1e6 / FPS;
+  const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), fastStart: "in-memory", video: { codec: "avc", width: v.width, height: v.height, frameRate: FPS } });
+  let i = 0;
+  for (const x of vs) for (const sm of x.samples) {
+    muxer.addVideoChunkRaw(sm.data, sm.key ? "key" : "delta", Math.round(i * fd), Math.round(fd),
+      i === 0 ? { decoderConfig: { codec: v.codec, codedWidth: v.width, codedHeight: v.height, description: v.desc } } : undefined);
+    i++;
+  }
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: "video/mp4" });
+}
+// Keeps the screen awake through a long export (it can't stop the tab from being hidden, only from sleeping).
+async function holdScreen() {
+  try { return await navigator.wakeLock?.request("screen"); } catch (e) { return null; }
+}
 // Render one asset to a file: { name, blob }. `say` reports progress.
 async function renderAsset(a, say) {
   if (a.kind === "video") {
-    const frames = Math.round(a.seconds * FPS);
-    let out = await C.encodeVideo(W, H, frames, async (ctx, i) => { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); },
-      f => say(`${Math.round(f * 100)}%`));
+    const frames = Math.round(a.seconds * FPS), t0 = performance.now();
+    const drawFrame = async (ctx, i, run = 0) => {
+      activeRun = run;
+      try { if (a.prepare) await a.prepare(i / FPS); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); a.draw(ctx, i / FPS, i); }
+      finally { activeRun = 0; }
+    };
+    const progress = f => {
+      const el = (performance.now() - t0) / 1000, left = f > 0.03 ? el / f - el : null;
+      say(`${Math.round(f * 100)}%${left !== null ? ` · about ${left < 60 ? Math.max(1, Math.round(left / 5) * 5) + " s" : Math.round(left / 60) + " min"} left` : ""}`);
+    };
+    const lock = await holdScreen();
+    let out;
+    try {
+      try { out = typeof Worker === "undefined" ? null : await encodeParallel(frames, drawFrame, progress); }
+      catch (e) { if (!e.encoder) throw e; console.warn("parallel encode failed, using one encoder", e); out = null; }
+      if (!out) out = await C.encodeVideo(W, H, frames, drawFrame, progress);
+    } finally { lock?.release().catch(() => {}); releaseRunVideos(); }
     if (a.clipFor && clipOf(a.clipFor) && keepSound(a.clipFor.id)) {
       say("adding the clip's sound");
       try { out = await withClipSound(out, a.clipFor, a.seconds); }
@@ -942,9 +1105,9 @@ function syncClipUI() {
   if (document.activeElement !== $("clipEnd")) $("clipEnd").value = r.end;
   $("clipStartOut").textContent = `${r.start.toFixed(1)} s`; $("clipEndOut").textContent = `${r.end.toFixed(1)} s · keeps ${r.len.toFixed(1)} s`;
   const f = films().find(x => x.id === id), TL = f && timeline(f), used = TL ? TL.filmEnd - TL.film : r.len;
-  info2.textContent = !TL ? "" : used < r.len - 0.2 ? `The reel has room for ${used.toFixed(1)} s, so the last ${(r.len - used).toFixed(1)} s of your trim is cut off. Try Long, or trim it shorter.`
+  info2.textContent = !TL ? "" : used < r.len - 0.2 ? `The reel has room for ${used.toFixed(1)} s, so the last ${(r.len - used).toFixed(1)} s of your trim is cut off. Try Long or Fit clip, or trim it shorter.`
     : used > r.len + 0.2 ? `Your words need ${used.toFixed(1)} s, so the ${r.len.toFixed(1)} s trim loops to fill it.`
-    : `The whole ${r.len.toFixed(1)} s trim plays. The reel runs ${TL.L.toFixed(0)} s.`;
+    : `The whole ${r.len.toFixed(1)} s trim plays. The reel runs ${mmss(TL.L)}${TL.L > 180 ? ", over Instagram's 3 min limit, so trim the clip" : ""}.`;
 }
 $("clipFile").addEventListener("change", async e => {
   const file = e.target.files[0]; e.target.value = ""; const id = P.currentSlideId(); if (!file || !id) return;
